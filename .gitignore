@@ -15,3 +15,4 @@ examples/*/.scala-build
 ide-*.json
 examples/vae_output
 .witdraw-docs
+uv.lock
