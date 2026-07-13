@@ -1,0 +1,17 @@
+target/*
+project/target/*
+project/project/target/*
+project/project/project/target/*
+.bsp
+.bloop
+.vscode
+.metals
+**/metals.sbt
+*.log   
+project/project/**
+*.pyc
+examples/target/
+examples/*/.scala-build
+ide-*.json
+examples/vae_output
+.witdraw-docs

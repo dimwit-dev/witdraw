@@ -1,0 +1,9 @@
+[project]
+name = "witdraw-python-env"
+version = "0.1.0"
+requires-python = "==3.12.*"
+dependencies = [
+    "einops>=0.8.1",
+    "jax[cuda12]>=0.8.1",
+    "blackjax>=1.5.0"
+]
