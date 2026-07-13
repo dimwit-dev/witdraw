@@ -3,7 +3,6 @@ package witdraw
 import dimwit.*
 import dimwit.tensor.{Labels, Tensor}
 
-
 // Match types: reduce to concrete shape/element at compile time for a known Tensor type
 private type ShapeOf[Ten <: Tensor[?, ?]] <: Tuple = Ten match
   case Tensor[t, v] => t
@@ -19,17 +18,21 @@ sealed trait SiteVariable[Ten <: Tensor[?, ?]]:
 
 /** A typed, named descriptor for a model variable.
   *
-  * Declare as `object Alpha extends Site[Tensor1[Feature, Float]]`. Pass to `sample` as a free variable, or fix a value
-  * with `site := value`.
+  * Declare as `object Alpha extends Site[Tensor1[Feature, Float]]`. Pass to
+  * `sample` as a free variable, or fix a value with `site := value`.
   */
-trait Site[Ten <: Tensor[?, ?]](using _lbl: Labels[ShapeOf[Ten]]) extends SiteVariable[Ten]:
+trait Site[Ten <: Tensor[?, ?]](using _lbl: Labels[ShapeOf[Ten]])
+    extends SiteVariable[Ten]:
   def name: String = getClass.getSimpleName.stripSuffix("$")
   def site: Site[?] = this
 
-  /** The tensor type of this site. Use as `Alpha.Value` in case class fields. */
+  /** The tensor type of this site. Use as `Alpha.Value` in case class fields.
+    */
   type Value = Ten
 
-  /** The model parameter type for this site (free or observed). Use as `Alpha.Variable` in model signatures. */
+  /** The model parameter type for this site (free or observed). Use as
+    * `Alpha.Variable` in model signatures.
+    */
   type Variable = SiteVariable[Ten]
 
   override given labels: Labels[ShapeOf[Ten]] = _lbl
@@ -39,7 +42,9 @@ trait Site[Ten <: Tensor[?, ?]](using _lbl: Labels[ShapeOf[Ten]]) extends SiteVa
     ObservedVariable(this, value)(using _lbl)
 
 object Site:
-  def apply[Ten <: Tensor[?, ?]](siteName: String)(using Labels[ShapeOf[Ten]]): Site[Ten] =
+  def apply[Ten <: Tensor[?, ?]](siteName: String)(using
+      Labels[ShapeOf[Ten]]
+  ): Site[Ten] =
     new Site[Ten]:
       override def name: String = siteName
 

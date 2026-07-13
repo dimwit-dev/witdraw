@@ -1,4 +1,5 @@
-package witdraw.mcmc
+package witdraw
+package mcmc
 
 import dimwit.*
 import dimwit.autodiff.TensorTree

@@ -10,9 +10,14 @@ project/project/project/target/*
 *.log   
 project/project/**
 *.pyc
+core/target/
+core/*/.scala-build
 examples/target/
 examples/*/.scala-build
+dataframe/target/
+dataframe/*/.scala-build
+plotting/target/
+plotting/*/.scala-build
 ide-*.json
-examples/vae_output
 .witdraw-docs
 uv.lock
