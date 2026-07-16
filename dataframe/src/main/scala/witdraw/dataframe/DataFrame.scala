@@ -77,26 +77,29 @@ object ToRow:
 
 /** A typed, pure-Scala dataframe backed by an IndexedSeq of NamedTuple rows.
   *
-  * K – tuple of column-name string literals, e.g. `("age", "income")` V – tuple
-  * of Scala value types, e.g. `(Int, Double)`
+  * Names – tuple of column-name string literals, e.g. `("age", "income")` Types
+  * – tuple of Scala value types, e.g. `(Int, Double)`
   */
-class DataFrame[K <: Tuple, V <: Tuple](val data: IndexedSeq[NamedTuple[K, V]]):
+class DataFrame[ColNames <: Tuple, ColTypes <: Tuple](
+    val data: IndexedSeq[NamedTuple[ColNames, ColTypes]]
+):
 
   /** Return the first `n` rows as a new DataFrame. */
-  def head(n: Int = 5): DataFrame[K, V] =
-    new DataFrame[K, V](data.take(n))
+  def head(n: Int = 5): DataFrame[ColNames, ColTypes] =
+    new DataFrame[ColNames, ColTypes](data.take(n))
 
   /** All rows as typed NamedTuples. Scala collections operate directly on the
     * result.
     */
-  def rows: IndexedSeq[NamedTuple[K, V]] = data
+  def rows: IndexedSeq[NamedTuple[ColNames, ColTypes]] = data
 
   /** Extract a single column as an IndexedSeq.
     *
     * Example:
     * {{{df.col(_.actor) // IndexedSeq[Int] df.col(_.balance) // IndexedSeq[Double]}}}
     */
-  def col[A](f: NamedTuple[K, V] => A): IndexedSeq[A] = data.map(f)
+  def col[A](f: NamedTuple[ColNames, ColTypes] => A): IndexedSeq[A] =
+    data.map(f)
 
   /** Transform each row, producing a new DataFrame with a different schema.
     *
@@ -109,13 +112,13 @@ class DataFrame[K <: Tuple, V <: Tuple](val data: IndexedSeq[NamedTuple[K, V]]):
     * }
     * }}}
     */
-  def mapRows[K2 <: Tuple, V2 <: Tuple](
-      f: NamedTuple[K, V] => NamedTuple[K2, V2]
-  ): DataFrame[K2, V2] =
-    new DataFrame[K2, V2](data.map(f))
+  def mapRows[ColNames2 <: Tuple, ColTypes2 <: Tuple](
+      f: NamedTuple[ColNames, ColTypes] => NamedTuple[ColNames2, ColTypes2]
+  ): DataFrame[ColNames2, ColTypes2] =
+    new DataFrame[ColNames2, ColTypes2](data.map(f))
 
   inline def show(n: Int = 5): String =
-    val keys = constValueTuple[K].toList.map(_.toString)
+    val keys = constValueTuple[ColNames].toList.map(_.toString)
     val sample = data.take(n)
     val header = keys.mkString(", ")
     val body = sample.map(_.toList.mkString(", ")).mkString("\n")
@@ -125,46 +128,63 @@ class DataFrame[K <: Tuple, V <: Tuple](val data: IndexedSeq[NamedTuple[K, V]]):
 
 object DataFrame:
 
-  /** Load a CSV file from disk. The column names in K must match the CSV header
-    * (order matters).
+  /** Phantom helper for specifying column types inline.
+    *
+    * Example:
+    * {{{DataFrame.fromCSV(file, (name = col[String], age = col[Option[Int]], income = col[Double]))}}}
     */
-  inline def fromCSV[K <: Tuple, V <: Tuple](file: File)(using
+  def col[A: FromString]: A = null.asInstanceOf[A]
+
+  /** Load a CSV file from disk. Pass a named-tuple literal built with [[col]]
+    * to specify the schema:
+    * {{{DataFrame.fromCSV(new File("data.csv"), (name = col[String], age = col[Option[Int]], income = col[Double]))}}}
+    */
+  inline def fromCSV[K <: Tuple, V <: Tuple](
+      file: File,
+      schema: NamedTuple[K, V]
+  )(using
       FromRow[V]
   ): DataFrame[K, V] =
     val text = Source.fromFile(file).mkString
     fromCsvText[K, V](text)
 
   /** Load a CSV from a URL using the `requests` library. */
-  inline def fromUrl[K <: Tuple, V <: Tuple](url: String)(using
-      FromRow[V]
-  ): DataFrame[K, V] =
+  inline def fromUrl[Names <: Tuple, Types <: Tuple](
+      url: String,
+      schema: NamedTuple[Names, Types]
+  )(using
+      FromRow[Types]
+  ): DataFrame[Names, Types] =
     val resp = requests.get(url)
     require(
       resp.statusCode == 200,
       s"Failed to fetch $url: HTTP ${resp.statusCode}"
     )
-    fromCsvText[K, V](resp.text())
+    fromCsvText[Names, Types](resp.text())
 
   /** Write a DataFrame to a CSV file. */
-  inline def writeCSV[K <: Tuple, V <: Tuple](df: DataFrame[K, V], file: File)(
-      using ToRow[V]
+  inline def writeCSV[Names <: Tuple, Types <: Tuple](
+      df: DataFrame[Names, Types],
+      file: File
+  )(using
+      ToRow[Types]
   ): Unit =
-    val keys = constValueTuple[K].toList.map(_.toString)
+    val keys = constValueTuple[Names].toList.map(_.toString)
     val writer = new java.io.PrintWriter(file)
     try
       writer.println(keys.mkString(","))
       df.data.foreach { row =>
         writer.println(
-          summon[ToRow[V]].serialise(row.asInstanceOf[V]).mkString(",")
+          summon[ToRow[Types]].serialise(row.asInstanceOf[Types]).mkString(",")
         )
       }
     finally writer.close()
 
-  private inline def fromCsvText[K <: Tuple, V <: Tuple](text: String)(using
-      fr: FromRow[V]
-  ): DataFrame[K, V] =
+  private inline def fromCsvText[Names <: Tuple, Types <: Tuple](text: String)(
+      using fr: FromRow[Types]
+  ): DataFrame[Names, Types] =
     val (rawHeader, rawRows) = CsvParser.parse(text)
-    val expectedKeys = constValueTuple[K].toList.map(_.toString)
+    val expectedKeys = constValueTuple[Names].toList.map(_.toString)
     // Drop a leading unnamed index column if present (common in R/Python exports)
     val (csvHeader, csvRows) =
       if rawHeader.headOption.exists(h => h.isEmpty || h == "") then
@@ -181,6 +201,6 @@ object DataFrame:
       expectedKeys.map(k => csvHeader.indexOf(k)).toArray
     val rows = csvRows.map { cells =>
       val reordered = colIndex.map(i => cells(i)).toList
-      fr.parse(reordered).asInstanceOf[NamedTuple[K, V]]
+      fr.parse(reordered).asInstanceOf[NamedTuple[Names, Types]]
     }
-    new DataFrame[K, V](rows)
+    new DataFrame[Names, Types](rows)
