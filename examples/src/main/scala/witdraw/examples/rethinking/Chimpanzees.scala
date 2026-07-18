@@ -25,20 +25,20 @@ object Chimpanzees:
   def chimps(): Unit =
     dimwit.initialize()
 
-    val schema = (
-      actor = DataFrame.col[Int],
-      recipient = DataFrame.col[String],
-      condition = DataFrame.col[Int],
-      block = DataFrame.col[Int],
-      trial = DataFrame.col[Int],
-      prosoc_left = DataFrame.col[Int],
-      chose_prosoc = DataFrame.col[Int],
-      pulled_left = DataFrame.col[Int]
+    type Schema = (
+        actor: Int,
+        recipient: String,
+        condition: Int,
+        block: Int,
+        trial: Int,
+        prosoc_left: Int,
+        chose_prosoc: Int,
+        pulled_left: Int
     )
 
     val dataDir = new File(System.getProperty("user.dir"))
     val df =
-      DataFrame.fromCSV(new File(dataDir, "data/chimpanzees.csv"), schema)
+      DataFrame.fromCSV[Schema](new File(dataDir, "data/chimpanzees.csv"))
 
     trait Trial derives Label // Each row is one experimental trial
     trait Chimp derives Label // The 7 individual chimpanzee subjects

@@ -5,6 +5,7 @@ import java.io.File
 import scala.NamedTuple.*
 import scala.compiletime.constValueTuple
 import scala.io.Source
+import scala.annotation.publicInBinary
 
 // ---------------------------------------------------------------------------
 // FromString – converts a raw CSV cell string to a typed value
@@ -38,6 +39,11 @@ object FromString:
     def parse(s: String): Option[A] =
       if s == null || s.trim.isEmpty then None
       else Some(summon[FromString[A]].parse(s))
+
+  given [A: FromString]: FromString[A | Null] with
+    def parse(s: String): A | Null =
+      if s == null || s.trim.isEmpty then null
+      else summon[FromString[A]].parse(s)
 
 // ---------------------------------------------------------------------------
 // FromRow – parses a positional List[String] into a typed tuple V
@@ -80,25 +86,24 @@ object ToRow:
   * Names – tuple of column-name string literals, e.g. `("age", "income")` Types
   * – tuple of Scala value types, e.g. `(Int, Double)`
   */
-class DataFrame[ColNames <: Tuple, ColTypes <: Tuple](
-    val data: IndexedSeq[NamedTuple[ColNames, ColTypes]]
+class DataFrame[ColNames <: Tuple, Values <: Tuple](
+    val data: IndexedSeq[NamedTuple[ColNames, Values]]
 ):
-
   /** Return the first `n` rows as a new DataFrame. */
-  def head(n: Int = 5): DataFrame[ColNames, ColTypes] =
-    new DataFrame[ColNames, ColTypes](data.take(n))
+  def head(n: Int = 5): DataFrame[ColNames, Values] =
+    new DataFrame[ColNames, Values](data.take(n))
 
   /** All rows as typed NamedTuples. Scala collections operate directly on the
     * result.
     */
-  def rows: IndexedSeq[NamedTuple[ColNames, ColTypes]] = data
+  def rows: IndexedSeq[NamedTuple[ColNames, Values]] = data
 
   /** Extract a single column as an IndexedSeq.
     *
     * Example:
     * {{{df.col(_.actor) // IndexedSeq[Int] df.col(_.balance) // IndexedSeq[Double]}}}
     */
-  def col[A](f: NamedTuple[ColNames, ColTypes] => A): IndexedSeq[A] =
+  def col[A](f: NamedTuple[ColNames, Values] => A): IndexedSeq[A] =
     data.map(f)
 
   /** Transform each row, producing a new DataFrame with a different schema.
@@ -112,10 +117,93 @@ class DataFrame[ColNames <: Tuple, ColTypes <: Tuple](
     * }
     * }}}
     */
-  def mapRows[ColNames2 <: Tuple, ColTypes2 <: Tuple](
-      f: NamedTuple[ColNames, ColTypes] => NamedTuple[ColNames2, ColTypes2]
-  ): DataFrame[ColNames2, ColTypes2] =
-    new DataFrame[ColNames2, ColTypes2](data.map(f))
+  def mapRows[ColNames2 <: Tuple, Values2 <: Tuple](
+      f: NamedTuple[ColNames, Values] => NamedTuple[ColNames2, Values2]
+  ): DataFrame[ColNames2, Values2] =
+    new DataFrame[ColNames2, Values2](data.map(f))
+
+  /** Filter rows, producing a new DataFrame with the same schema. */
+  def filter(
+      f: NamedTuple[ColNames, Values] => Boolean
+  ): DataFrame[ColNames, Values] =
+    new DataFrame[ColNames, Values](data.filter(f))
+
+  /** Drop a single column by [[Col]] reference.
+    *
+    * Example: {{{df.drop(Col["age"])}}}
+    */
+  inline def drop[L <: String & Singleton](col: Col[L])(using
+      ev: NamedTupleOps.DropField[ColNames, Values, L]
+  ): DataFrame[
+    NamedTupleOps.DropName[ColNames, L],
+    NamedTupleOps.DropType[Values, ColNames, L]
+  ] =
+    new DataFrame(
+      data.map(row =>
+        ev(row.toTuple).asInstanceOf[NamedTuple[
+          NamedTupleOps.DropName[ColNames, L],
+          NamedTupleOps.DropType[Values, ColNames, L]
+        ]]
+      )
+    )
+
+  /** Select (and optionally reorder) columns by passing a tuple of [[Col]]
+    * phantoms.
+    *
+    * Example: {{{df.select((Col["age"], Col["income"]))}}}
+    */
+  inline def select[C <: Tuple](cols: C)(using
+      ev: NamedTupleOps.SelectFields[
+        ColNames,
+        Values,
+        NamedTupleOps.ExtractLabels[C]
+      ]
+  ): DataFrame[
+    NamedTupleOps.ExtractLabels[C],
+    NamedTupleOps.LookupTypes[ColNames, Values, NamedTupleOps.ExtractLabels[C]]
+  ] =
+    new DataFrame(
+      data.map(row =>
+        ev(row.toTuple).asInstanceOf[NamedTuple[
+          NamedTupleOps.ExtractLabels[C],
+          NamedTupleOps.LookupTypes[
+            ColNames,
+            Values,
+            NamedTupleOps.ExtractLabels[C]
+          ]
+        ]]
+      )
+    )
+
+  /** Drop multiple columns by passing a tuple of [[Col]] phantoms.
+    *
+    * Example: {{{df.dropColumns((Col["age"], Col["income"]))}}}
+    */
+  inline def dropColumns[C <: Tuple](cols: C)(using
+      ev: NamedTupleOps.SelectFields[
+        ColNames,
+        Values,
+        NamedTupleOps.KeepNames[ColNames, NamedTupleOps.ExtractLabels[C]]
+      ]
+  ): DataFrame[
+    NamedTupleOps.KeepNames[ColNames, NamedTupleOps.ExtractLabels[C]],
+    NamedTupleOps.LookupTypes[ColNames, Values, NamedTupleOps.KeepNames[
+      ColNames,
+      NamedTupleOps.ExtractLabels[C]
+    ]]
+  ] =
+    new DataFrame(
+      data.map(row =>
+        ev(row.toTuple).asInstanceOf[NamedTuple[
+          NamedTupleOps.KeepNames[ColNames, NamedTupleOps.ExtractLabels[C]],
+          NamedTupleOps.LookupTypes[
+            ColNames,
+            Values,
+            NamedTupleOps.KeepNames[ColNames, NamedTupleOps.ExtractLabels[C]]
+          ]
+        ]]
+      )
+    )
 
   inline def show(n: Int = 5): String =
     val keys = constValueTuple[ColNames].toList.map(_.toString)
@@ -128,39 +216,51 @@ class DataFrame[ColNames <: Tuple, ColTypes <: Tuple](
 
 object DataFrame:
 
-  /** Phantom helper for specifying column types inline.
+  import scala.compiletime.{erasedValue, summonInline, error}
+
+  /** Applier for [[DataFrame.updateCol]] — carries `L` so `A` can be inferred
+    * from the function.
+    */
+  final class UpdateColApplier[
+      L <: String & Singleton,
+      CN <: Tuple,
+      V <: Tuple
+  ](
+      private val data: IndexedSeq[NamedTuple[CN, V]]
+  ):
+    def apply[A](f: NamedTuple[CN, V] => A)(using
+        ev: NamedTupleOps.UpdateField[CN, V, L, A]
+    ): DataFrame[CN, NamedTupleOps.UpdatedType[V, CN, L, A]] =
+      new DataFrame(
+        data.map(row =>
+          ev(row.toTuple, f(row)).asInstanceOf[NamedTuple[
+            CN,
+            NamedTupleOps.UpdatedType[V, CN, L, A]
+          ]]
+        )
+      )
+
+  /** Load a CSV file from disk, schema driven by a named-tuple type parameter.
     *
     * Example:
-    * {{{DataFrame.fromCSV(file, (name = col[String], age = col[Option[Int]], income = col[Double]))}}}
+    * {{{DataFrame.fromCSV[(name: String, age: Int, income: Double)](new File("data.csv"))}}}
     */
-  def col[A: FromString]: A = null.asInstanceOf[A]
-
-  /** Load a CSV file from disk. Pass a named-tuple literal built with [[col]]
-    * to specify the schema:
-    * {{{DataFrame.fromCSV(new File("data.csv"), (name = col[String], age = col[Option[Int]], income = col[Double]))}}}
-    */
-  inline def fromCSV[K <: Tuple, V <: Tuple](
-      file: File,
-      schema: NamedTuple[K, V]
-  )(using
-      FromRow[V]
-  ): DataFrame[K, V] =
+  inline def fromCSV[NT <: AnyNamedTuple](file: File)(using
+      FromRow[DropNames[NT]]
+  ): DataFrame[Names[NT], DropNames[NT]] =
     val text = Source.fromFile(file).mkString
-    fromCsvText[K, V](text)
+    fromCsvText[Names[NT], DropNames[NT]](text)
 
   /** Load a CSV from a URL using the `requests` library. */
-  inline def fromUrl[Names <: Tuple, Types <: Tuple](
-      url: String,
-      schema: NamedTuple[Names, Types]
-  )(using
-      FromRow[Types]
-  ): DataFrame[Names, Types] =
+  inline def fromUrl[NT <: AnyNamedTuple](url: String)(using
+      FromRow[DropNames[NT]]
+  ): DataFrame[Names[NT], DropNames[NT]] =
     val resp = requests.get(url)
     require(
       resp.statusCode == 200,
       s"Failed to fetch $url: HTTP ${resp.statusCode}"
     )
-    fromCsvText[Names, Types](resp.text())
+    fromCsvText[Names[NT], DropNames[NT]](resp.text())
 
   /** Write a DataFrame to a CSV file. */
   inline def writeCSV[Names <: Tuple, Types <: Tuple](
