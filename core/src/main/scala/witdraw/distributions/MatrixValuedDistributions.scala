@@ -1,0 +1,101 @@
+package witdraw.distributions
+
+import dimwit.*
+import dimwit.linalg.LinearAlgebra
+import dimwit.python.PyBridge
+import dimwit.stats.{Beta, Normal}
+import me.shadaj.scalapy.py
+
+/** LKJ distribution over d×d correlation matrices.
+  *
+  * The LKJ distribution (Lewandowski, Kurowicka, Joe 2009) is parameterised by
+  * a scalar concentration η > 0. η = 1 is uniform over all correlation
+  * matrices; η > 1 concentrates mass near the identity matrix.
+  *
+  * Sampling uses the Onion method (Lewandowski et al. 2009, Algorithm 3): the
+  * correlation matrix is grown from 2×2 to d×d one row/column at a time, each
+  * step using the Cholesky factor of the existing submatrix.
+  */
+class LKJ[L: Label, V: IsFloating](
+    val concentration: Tensor0[V],
+    val matrixShape: Shape2[L, Prime[L]]
+) extends Distribution[(L, Prime[L]), V]:
+
+  private val d: Int = matrixShape.dimensions(0)
+
+  override def logProb(R: Tensor2[L, Prime[L], V]): Tensor0[LogProb] =
+    val L_chol = LinearAlgebra.cholesky(R)
+    val logDet: Tensor0[Float32] =
+      (L_chol.diagonal(Axis[L]).log.sum * Tensor0(VType[V])(2f))
+        .asType(VType[Float32])
+
+    val eta = concentration.asType(VType[Float32])
+    val gammaln = PyBridge.liftPyFn[Tensor0[Float32], Tensor0[Float32]](
+      py.module("jax.scipy.special").gammaln
+    )
+
+    // LKJ normalizing constant (Lewandowski et al. 2009, scipy reference):
+    // log C = Σ_{k=1}^{d-1} [ (2α_k - 1)·log2 + log B(α_k, α_k) ]
+    // where α_k = η + (d - 1 - k) / 2,  log B(a,a) = 2·lgamma(a) - lgamma(2a)
+    var logNorm = Tensor0(0f)
+    for k <- 1 until d do
+      val alpha = eta + Tensor0((d - 1 - k).toFloat / 2f)
+      logNorm += (Tensor0(2f) * alpha - Tensor0(1f)) * Tensor0(
+        math.log(2).toFloat
+      ) +
+        Tensor0(2f) * gammaln(alpha) - gammaln(alpha * Tensor0(2f))
+
+    val logProbValue = (eta - Tensor0(1f)) * logDet + logNorm
+
+    LogProb(logProbValue.asFloat32)
+
+  override def sample(key: Random.Key): Tensor2[L, Prime[L], V] =
+
+    // Initialise the full d×d result matrix to the identity.
+    var R: Tensor2[L, Prime[L], V] = Tensor(matrixShape, VType[V]).fill(0f)
+    for i <- 0 until d do R = R.set((Axis[L].at(i), Axis[Prime[L]].at(i)))(1f)
+
+    if d < 2 then return R
+
+    // One key for the initialisation step, one key per loop iteration.
+    val keys = key.split(d - 1)
+
+    // ── Step 1: initialise the 2×2 top-left block ──────────────────────────
+    // β = η + (d−2)/2;  r₁₂ = 2u − 1,  u ~ Beta(β, β)
+    var beta: Tensor0[Float32] =
+      concentration.asType(VType[Float32]) + Tensor0((d - 2) / 2.0f)
+    val u0: Tensor0[Float32] = Beta(beta, beta).sample(keys(0))
+    val r12: Tensor0[V] = (u0 * Tensor0(2f) - Tensor0(1f)).asType(VType[V])
+    R = R.set((Axis[L].at(0), Axis[Prime[L]].at(1)))(r12)
+    R = R.set((Axis[L].at(1), Axis[Prime[L]].at(0)))(r12)
+
+    // ── Step 2: grow the block from 2×2 up to d×d ─────────────────────────
+    for n <- 2 until d do
+      beta = beta - Tensor0(0.5f)
+      val (kb, ku) = keys(n - 1).split2()
+
+      // y ~ Beta(n/2, β)
+      val y: Tensor0[Float32] = Beta(Tensor0(n / 2.0f), beta).sample(kb)
+
+      // u uniform on the n-sphere via normalised standard normals
+      val zFull: Tensor1[Prime[L], Float32] =
+        Normal.standardNormal(Shape1(Axis[Prime[L]] -> d)).sample(ku)
+      val zSlice: Tensor1[Prime[L], Float32] =
+        zFull.slice(Axis[Prime[L]].at(0 until n))
+      val uUnit: Tensor1[Prime[L], Float32] =
+        zSlice /! LinearAlgebra.norm(zSlice, LinearAlgebra.VectorNormType.L2)
+
+      // w = √y · u
+      val w: Tensor1[Prime[L], V] = (uUnit *! y.sqrt).asType(VType[V])
+
+      // A = chol(R[0:n, 0:n]),  z = A · w  (new off-diagonal column)
+      val subR = R.slice((Axis[L].at(0 until n), Axis[Prime[L]].at(0 until n)))
+      val A = LinearAlgebra.cholesky(subR)
+      val z: Tensor1[L, V] = A.dot(Axis[Prime[L]])(w)
+
+      // Extend R symmetrically: new column then new row
+      R = R.set((Axis[L].at(0 until n), Axis[Prime[L]].at(n)))(z)
+      val zRow: Tensor1[Prime[L], V] = z.relabelTo(Axis[Prime[L]])
+      R = R.set((Axis[L].at(n), Axis[Prime[L]].at(0 until n)))(zRow)
+
+    R
