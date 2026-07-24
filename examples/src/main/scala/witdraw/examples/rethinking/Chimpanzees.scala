@@ -137,17 +137,10 @@ object Chimpanzees:
         chimpVariability: Tensor0[Float32]
     )
 
-    def logDensity(posteriorParams: Posterior) =
-      val observedModel = model.observe(
-        PulledLeft := pulledLeft,
-        ChimpIntercept := posteriorParams.chimpIntercept,
-        PopulationIntercept := posteriorParams.populationIntercept,
-        ProsocialEffect := posteriorParams.prosocialEffect,
-        PartnerEffect := posteriorParams.partnerEffect,
-        ChimpVariability := posteriorParams.chimpVariability
-      )
+    val conditioned = model.observe(PulledLeft := pulledLeft)
 
-      ModelScorer.run(observedModel)
+    def logDensity(posteriorParams: Posterior) =
+      ModelScorer.run(conditioned.observeAll(posteriorParams))
 
     val burnIn = 2000
     val nSamples = 5000

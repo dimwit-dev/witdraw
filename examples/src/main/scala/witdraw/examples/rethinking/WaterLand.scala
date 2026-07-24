@@ -13,8 +13,8 @@ import viz.PlotTargets.websocket
 
 object WaterLandExample:
 
-  val WaterProp = Site[Tensor0[Float32]]("WaterProp")
-  val WaterCount = Site[Tensor0[Int32]]("WaterCount")
+  object WaterProp extends Site[Tensor0[Float32]]
+  object WaterCount extends Site[Tensor0[Int32]]
 
   def model(numTosses: Int) = ProbProg:
     val wp = RandomVar(
@@ -53,11 +53,10 @@ object WaterLandExample:
 
     type PosteriorParams = (waterProp: Tensor0[Float32])
 
+    val conditioned = model(numTosses).observe(WaterCount := waterCountData)
+
     val logDensity = (params: PosteriorParams) =>
-      ModelScorer.run(
-        model(numTosses)
-          .observe(WaterProp := params.waterProp, WaterCount := waterCountData)
-      )
+      ModelScorer.run(conditioned.observeAll(params))
 
     val burnIn = 500
     val nSamples = 2000

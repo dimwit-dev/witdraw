@@ -51,8 +51,31 @@ class ProbProg[+Val](private[witdraw] val underlying: ProbContext ?=> Val):
     *   }}}
     */
   def observe(observations: ObservedVariable[?]*): ProbProg[Val] =
-    val obsMap: Map[Site[?], ObservedVariable[?]] =
-      observations.map(o => o.site -> o).toMap
+    observeByName(observations.map(o => o.name -> (o.value: Any)).toMap)
+
+  /** Condition this program by observing all fields of a product (case class or
+    * named tuple). Each field name is matched to a site by decapitalized name,
+    * so `object WaterProp` matches field `waterProp`.
+    *
+    * @example
+    *   {{{{ type Posterior = (waterProp: Tensor0[Float32]) val conditioned =
+    *   model.observe(WaterCount := data) def logDensity(p: Posterior) =
+    *   ModelScorer.run(conditioned.observeAll(p)) }}}}
+    */
+  inline def observeAll[P](p: P)(using
+      m: scala.deriving.Mirror.ProductOf[P]
+  ): ProbProg[Val] =
+    val names = scala.compiletime
+      .constValueTuple[m.MirroredElemLabels]
+      .toList
+      .map(_.toString)
+    val values = p.asInstanceOf[Product].productIterator.toList
+    observeByName(names.zip(values).toMap)
+
+  // Core implementation: match sites by decapitalized name → raw value.
+  // The ObservedVariable is reconstructed at match time using the model site's
+  // own labels, so no Labels evidence is needed at observation-building time.
+  private def observeByName(byName: Map[String, Any]): ProbProg[Val] =
     ProbProg:
       val outerCtx = summon[ProbContext]
       val innerCtx = new ProbContext:
@@ -60,9 +83,14 @@ class ProbProg[+Val](private[witdraw] val underlying: ProbContext ?=> Val):
             variable: SiteVariable[Ten],
             dist: Distribution[ShapeOf[Ten], ElemOf[Ten]]
         ): Ten =
-          obsMap.get(variable.site) match
-            case Some(obs) =>
-              outerCtx.randomVar(obs.asInstanceOf[ObservedVariable[Ten]], dist)
+          val key = variable.name.updated(0, variable.name(0).toLower)
+          byName.get(key) match
+            case Some(value) =>
+              val obs =
+                ObservedVariable(variable.site, value.asInstanceOf[Ten])(using
+                  variable.labels
+                )
+              outerCtx.randomVar(obs, dist)
             case None =>
               outerCtx.randomVar(variable, dist)
       ProbProg.this.run(using innerCtx)
