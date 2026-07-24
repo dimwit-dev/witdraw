@@ -12,6 +12,7 @@ import witdraw.ModelScorer
 import witdraw.ProbProg
 import witdraw.RandomVar
 import witdraw.Site
+import witdraw.given
 import witdraw.dataframe.DataFrame
 import witdraw.mcmc.NUTSAlgorithm
 import witdraw.plotting.Plotting
@@ -73,16 +74,7 @@ object Chimpanzees:
     // Between-chimp standard deviation (controls partial pooling strength)
     object ChimpVariability extends Site[Tensor0[Float32]]
 
-    case class Result(
-        chimpIntercept: ChimpIntercept.Value,
-        populationIntercept: PopulationIntercept.Value,
-        prosocialEffect: ProsocialEffect.Value,
-        partnerEffect: PartnerEffect.Value,
-        chimpVariability: ChimpVariability.Value,
-        pulledLeft: PulledLeft.Value
-    )
-
-    val model = ProbProg[Result]:
+    val model = ProbProg:
 
       // How much extra pull-left tendency when a partner is present
       val partnerEffect = RandomVar(
@@ -128,22 +120,22 @@ object Chimpanzees:
       )
       val pulledLeft =
         RandomVar(site = PulledLeft, dist = Bernoulli(probPullLeft))
-      Result(
-        chimpIntercept,
-        populationIntercept,
-        prosocialEffect,
-        partnerEffect,
-        chimpVariability,
-        pulledLeft
+      (
+        chimpIntercept = chimpIntercept,
+        populationIntercept = populationIntercept,
+        prosocialEffect = prosocialEffect,
+        partnerEffect = partnerEffect,
+        chimpVariability = chimpVariability,
+        pulledLeft = pulledLeft
       )
 
-    case class Posterior(
-        chimpIntercept: ChimpIntercept.Value,
-        populationIntercept: PopulationIntercept.Value,
-        prosocialEffect: ProsocialEffect.Value,
-        partnerEffect: PartnerEffect.Value,
-        chimpVariability: ChimpVariability.Value
-    ) derives TensorTree
+    type Posterior = (
+        chimpIntercept: Tensor1[Chimp, Float32],
+        populationIntercept: Tensor0[Float32],
+        prosocialEffect: Tensor0[Float32],
+        partnerEffect: Tensor0[Float32],
+        chimpVariability: Tensor0[Float32]
+    )
 
     def logDensity(posteriorParams: Posterior) =
       val observedModel = model.observe(
@@ -162,8 +154,8 @@ object Chimpanzees:
     val nuts = NUTSAlgorithm[Posterior](stepSize = 0.1)(logDensity)
     val (nutsSamples, nutsInfos) = nuts
       .run(
-        Posterior(
-          Tensor1(Axis[Chimp] -> nChimps).fill(0f),
+        (
+          chimpIntercept = Tensor1(Axis[Chimp] -> nChimps).fill(0f),
           populationIntercept = Tensor0(0f),
           prosocialEffect = Tensor0(0f),
           partnerEffect = Tensor0(0f),

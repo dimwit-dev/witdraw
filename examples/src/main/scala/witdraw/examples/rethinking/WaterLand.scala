@@ -13,13 +13,8 @@ import viz.PlotTargets.websocket
 
 object WaterLandExample:
 
-  object WaterProp extends Site[Tensor0[Float32]]
-  object WaterCount extends Site[Tensor0[Int32]]
-
-  case class Result(
-      waterProp: WaterProp.Value,
-      waterCount: WaterCount.Value
-  )
+  val WaterProp = Site[Tensor0[Float32]]("WaterProp")
+  val WaterCount = Site[Tensor0[Int32]]("WaterCount")
 
   def model(numTosses: Int) = ProbProg:
     val wp = RandomVar(
@@ -30,7 +25,7 @@ object WaterLandExample:
       site = WaterCount,
       dist = Binomial(Tensor0(numTosses), Prob(wp))
     )
-    Result(wp, wc)
+    (waterProp = wp, waterCount = wc)
 
   @main
   def main(): Unit =
@@ -56,7 +51,7 @@ object WaterLandExample:
           )
           .waterCount
 
-    case class PosteriorParams(waterProp: WaterProp.Value) derives TensorTree
+    type PosteriorParams = (waterProp: Tensor0[Float32])
 
     val logDensity = (params: PosteriorParams) =>
       ModelScorer.run(
@@ -73,7 +68,7 @@ object WaterLandExample:
     )
 
     val map = ok
-      .run(PosteriorParams(Tensor0(0.5f)), Key(42))
+      .run((waterProp = Tensor0(0.5f)), Key(42))
       .take(100)
       .toList
       .last
