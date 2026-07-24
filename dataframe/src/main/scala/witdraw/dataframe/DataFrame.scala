@@ -216,6 +216,13 @@ class DataFrame[ColNames <: Tuple, Values <: Tuple](
 
 object DataFrame:
 
+  /** Convenience alias: `DataFrame.Of[Schema]` is shorthand for
+    * `DataFrame[Names[Schema], DropNames[Schema]]`.
+    *
+    * Example: {{{type StocksDF = DataFrame.Of[(Symbol: String, Sector: String, MarketCap_BCHF: Double)]}}}
+    */
+  type Of[NT <: AnyNamedTuple] = DataFrame[Names[NT], DropNames[NT]]
+
   import scala.compiletime.{erasedValue, summonInline, error}
 
   /** Applier for [[DataFrame.updateCol]] — carries `L` so `A` can be inferred
