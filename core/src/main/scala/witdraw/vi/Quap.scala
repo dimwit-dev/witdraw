@@ -3,7 +3,7 @@ package witdraw.vi
 import dimwit.stats.MVNormal
 import dimwit.tensor.Label
 import dimwit.Float32
-import dimwit.autodiff.TensorTree
+import dimwit.tensortree.TensorTree
 import dimwit.autodiff.Autodiff
 import dimwit.tensor.Tensor0
 import dimwit.*

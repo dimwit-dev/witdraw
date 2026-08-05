@@ -2,9 +2,10 @@ package witdraw
 package mcmc
 
 import dimwit.*
-import dimwit.autodiff.{Autodiff, TensorTree, FloatTreeFor, Grad}
+import dimwit.autodiff.{Autodiff, Grad}
 import dimwit.random.Random.Key
 import dimwit.optimizer.GradientOptimizer
+import dimwit.tensortree.FloatTreeFor
 
 /** The state carried between kernel steps. Every state must expose its chain
   * position.
@@ -60,7 +61,11 @@ object OptimizerKernel:
   def toSamplingAlgorithm[P: TensorTree: FloatTreeFor[Float32]](
       optimizer: GradientOptimizer,
       gradFn: P => Grad[P]
-  ): SamplingAlgorithm[P, OptimizerKernelState[P, optimizer.State[P]], Unit] =
+  ): SamplingAlgorithm[
+    P,
+    OptimizerKernelState[P, optimizer.State[P, Float32]],
+    Unit
+  ] =
     SamplingAlgorithm(
       init = p => OptimizerKernelState(p, optimizer.init(p)),
       step = (_, state) =>

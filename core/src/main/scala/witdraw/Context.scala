@@ -51,10 +51,14 @@ class ProbProg[+Val](private[witdraw] val underlying: ProbContext ?=> Val):
     *   }}}
     */
   def observe(observations: ObservedVariable[?]*): ProbProg[Val] =
-    observeByName(observations.map(o =>
-      val n = o.name
-      n.updated(0, n(0).toLower) -> (o.value: Any)
-    ).toMap)
+    observeByName(
+      observations
+        .map(o =>
+          val n = o.name
+          n.updated(0, n(0).toLower) -> (o.value: Any)
+        )
+        .toMap
+    )
 
   /** Condition this program by observing all fields of a product (case class or
     * named tuple). Each field name is matched to a site by decapitalized name,

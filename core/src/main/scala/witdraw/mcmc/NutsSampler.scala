@@ -2,7 +2,7 @@ package witdraw
 package mcmc
 
 import dimwit.*
-import dimwit.autodiff.TensorTree
+import dimwit.tensortree.TensorTree
 import dimwit.python.PyBridge
 import dimwit.random.Random
 import me.shadaj.scalapy.py
