@@ -4,8 +4,7 @@ version := "0.1.0-SNAPSHOT"
 
 ThisBuild / scalaVersion := "3.8.1"
 ThisBuild / resolvers += "Sonatype OSS Snapshots" at "https://oss.sonatype.org/content/repositories/snapshots"
-
-organization := "ch.contrafactus"
+ThisBuild / organization := "ch.contrafactus"
 
 import scala.concurrent.duration.DurationInt
 import lmcoursier.definitions.CachePolicy
@@ -21,6 +20,7 @@ lazy val root = (project in file("."))
 
 lazy val core = (project in file("core"))
   .settings(
+    name := "witdraw-core",
     libraryDependencies ++= Seq(
       "ch.contrafactus" %% "dimwit-core" % "0.1.0-SNAPSHOT" changing (),
       "ch.contrafactus" %% "deepwit-core" % "0.1.0-SNAPSHOT" changing ()
