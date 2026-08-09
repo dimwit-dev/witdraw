@@ -7,9 +7,9 @@ import witdraw.*
 import witdraw.mcmc.OptimizerKernel
 import witdraw.mcmc.NUTSAlgorithm
 
-import witdraw.plotting.Plotting
-
-import viz.PlotTargets.websocket
+import plotwit.plotting.PlotTargets.websocket
+import plotwit.{display, grid}
+import plotwit.plotting.plots.histogramPlot
 
 object WaterLandExample:
 
@@ -62,7 +62,7 @@ object WaterLandExample:
     val nSamples = 2000
 
     val ok = OptimizerKernel.toSamplingAlgorithm(
-      optimizer = dimwit.optimizer.Adam(learningRate = Tensor0(-0.1f)),
+      optimizer = dimwit.optimizer.Adam(learningRate = -0.1f),
       gradFn = (params: PosteriorParams) => Autodiff.grad(logDensity)(params)
     )
 
@@ -90,9 +90,9 @@ object WaterLandExample:
     )
 
     val posteriorSamples = stack(nutsSamples.map(_.waterProp), Axis[Sample])
-    Plotting.display(
-      Plotting.plotHistogram(
+    display(
+      histogramPlot(
         posteriorSamples,
-        title = Some("Posterior of water proportion")
+        _.title := "Posterior distribution of water proportion"
       )
     )

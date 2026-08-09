@@ -16,7 +16,7 @@ csrConfiguration := csrConfiguration.value
 resolvers += Resolver.defaultLocal
 
 lazy val root = (project in file("."))
-  .aggregate(core, plotting, dataframe, examples)
+  .aggregate(core, examples)
 
 lazy val core = (project in file("core"))
   .settings(
@@ -28,35 +28,14 @@ lazy val core = (project in file("core"))
     fork := true
   )
 
-lazy val plotting = (project in file("plotting"))
-  .dependsOn(core)
-  .settings(
-    name := "witdraw-plotting",
-    libraryDependencies ++= Seq(
-      "io.github.quafadas" %% "dedav4s" % "0.10.5"
-    ),
-    fork := true,
-    run / baseDirectory := (ThisBuild / baseDirectory).value / "plotting"
-  )
-
-lazy val dataframe = (project in file("dataframe"))
-  .dependsOn(core)
-  .settings(
-    name := "witdraw-dataframe",
-    libraryDependencies ++= Seq(
-      "io.github.quafadas" %% "dedav4s" % "0.10.5"
-    ),
-    fork := true,
-    run / baseDirectory := (ThisBuild / baseDirectory).value / "dataframe"
-  )
-
 lazy val examples = (project in file("examples"))
-  .dependsOn(core, plotting, dataframe)
+  .dependsOn(core)
   .settings(
     name := "witdraw-examples",
     libraryDependencies ++= Seq(
       "org.scala-lang" %% "toolkit" % "0.9.1",
-      "com.lihaoyi" %% "requests" % "0.9.3"
+      "ch.contrafactus" %% "witling-core" % "0.1-SNAPSHOT" changing (),
+      "ch.contrafactus" %% "plotwit-core" % "0.1-SNAPSHOT" changing ()
     ),
     fork := true,
     run / baseDirectory := (ThisBuild / baseDirectory).value / "examples"

@@ -13,12 +13,13 @@ import witdraw.ProbProg
 import witdraw.RandomVar
 import witdraw.Site
 import witdraw.given
-import witdraw.dataframe.DataFrame
+import witling.DataFrame
 import witdraw.mcmc.NUTSAlgorithm
-import witdraw.plotting.Plotting
-import witdraw.plotting.Plotting.display
+import plotwit.plotting.PlotTargets.websocket
+import plotwit.{display, grid}
 
 import java.io.File
+import plotwit.plotting.plots.histogramPlot
 
 object Chimpanzees:
 
@@ -46,20 +47,22 @@ object Chimpanzees:
 
     // Whether a partner chimp was present in this trial (the "condition")
     val hasPartner =
-      Tensor1(Axis[Trial]).fromArray(df.col(_.condition).toArray)
+      Tensor1(Axis[Trial]).fromArray(df.cols.condition.toArray)
     // Whether the prosocial food option was on the left side
     val prosocialOnLeft =
-      Tensor1(Axis[Trial]).fromArray(df.col(_.prosoc_left).toArray)
+      Tensor1(Axis[Trial]).fromArray(df.cols.prosoc_left.toArray)
     // Observed outcome: did the chimp pull the left lever?
     val pulledLeft =
-      Tensor1(Axis[Trial]).fromArray(df.col(_.pulled_left == 1).toArray)
-    val chimps = df.col(_.actor).toSet.toList.sorted
+      Tensor1(Axis[Trial]).fromArray(
+        df.cols.pulled_left.toArray.map(b => if b == 1 then true else false)
+      )
+    val chimps = df.cols.actor.toSet.toList.sorted
 
     // For each trial, the index of the chimp that performed it
-    val chimpIndexPerTrial = df.col(row => chimps.indexOf(row.actor))
+    val chimpIndexPerTrial = df.cols.actor.map(actor => chimps.indexOf(actor))
 
     val nTrials = hasPartner.shape(Axis[Trial])
-    val nChimps = df.col(_.actor).toSet.size
+    val nChimps = df.cols.actor.toSet.size
 
     object PulledLeft extends Site[Tensor1[Trial, Bool]]
 
@@ -167,31 +170,31 @@ object Chimpanzees:
     //     title = Some("Posterior of chimpIntercept")
     //   )
     val pProsocialEffect =
-      Plotting.plotHistogram(
+      histogramPlot(
         stack(nutsSamples.map(_.prosocialEffect), Axis[Trial]),
-        title = Some("Posterior of prosocialEffect")
+        _.title := "Posterior of prosocialEffect"
       )
     val pPartnerEffect =
-      Plotting.plotHistogram(
+      histogramPlot(
         stack(nutsSamples.map(_.partnerEffect), Axis[Trial]),
-        title = Some("Posterior of partnerEffect")
+        _.title := "Posterior of partnerEffect"
       )
 
-    val chimp0Plot = Plotting.plotHistogram(
+    val chimp0Plot = histogramPlot(
       stack(
         nutsSamples.map(_.chimpIntercept.slice(Axis[Chimp].at(0))),
         Axis[Trial]
       ),
-      title = Some("Posterior of chimpIntercept[0]")
+      _.title := "Posterior of chimpIntercept[0]"
     )
-    val chimp1Plot = Plotting.plotHistogram(
+    val chimp1Plot = histogramPlot(
       stack(
         nutsSamples.map(_.chimpIntercept.slice(Axis[Chimp].at(1))),
         Axis[Trial]
       ),
-      title = Some("Posterior of chimpIntercept[1]")
+      _.title := "Posterior of chimpIntercept[1]"
     )
-    val allPlots = Plotting.grid(
+    val allPlots = grid(
       List(List(chimp0Plot, pProsocialEffect), List(pPartnerEffect, chimp1Plot))
     )
     display(allPlots)

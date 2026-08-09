@@ -1,10 +1,8 @@
 package witdraw.examples.rethinking
 
 import dimwit.*
-import witdraw.dataframe.DataFrame
+import witling.DataFrame
 import java.io.File
-import witdraw.dataframe.Col
-import witdraw.dataframe.updated
 import dimwit.stats.HalfCauchy
 import dimwit.stats.Distribution
 import witdraw.Site
@@ -14,12 +12,14 @@ import dimwit.stats.MVNormal
 import dimwit.nn.ActivationFunctions
 import dimwit.stats.Bernoulli
 import witdraw.ForwardSampler
-import witdraw.plotting.Plotting
-import viz.PlotTargets.websocket
+import plotwit.plotting.PlotTargets.websocket
+import plotwit.{display, grid}
 import witdraw.distributions.LKJ
 import witdraw.ModelScorer
 import witdraw.mcmc.NUTSAlgorithm
 import dimwit.jax.Jax
+import witling.updated
+import witling.Col
 
 class IndependentMultivariateDist[LBatch: Label, L: Label](
     extent: AxisExtent[LBatch],
@@ -64,7 +64,7 @@ object AdmissionEx:
             case "F" => 5)
       )
 
-    val nDepts = dfCleaned.col(_.Dept).toSet.size
+    val nDepts = dfCleaned.cols.Dept.toSet.size
 
     trait Case derives Label // Each row in the dataset is a case
     trait Dept derives Label // Each department is a category
@@ -93,9 +93,9 @@ object AdmissionEx:
     // object AdmissionProb extends Site[Tensor1[Case, Prob]]
     object Admission extends Site[Tensor1[Case, Bool]]
 
-    val depts = dfCleaned.col(_.Dept).toSet.toList.sorted
-    val deptIndex = dfCleaned.rows.map(row => depts.indexOf(row.Dept))
-    val male = Tensor1(Axis[Case]).fromArray(dfCleaned.col(_.Gender).toArray)
+    val depts = dfCleaned.cols.Dept.toSet.toList.sorted
+    val deptIndex = dfCleaned.cols.Dept.map(dept => depts.indexOf(dept))
+    val male = Tensor1(Axis[Case]).fromArray(dfCleaned.cols.Gender.toArray)
 
     case class Result(
         alphaDept: AlphaDept.Value,
@@ -184,8 +184,8 @@ object AdmissionEx:
       deptAB = Tensor2(Axis[Dept] -> nDepts, Axis[AB] -> 2).fill(1f)
     )
 
-    val admission = Tensor1(Axis[Case] -> dfCleaned.rows.size).fromArray(
-      dfCleaned.col(_.Admit).toArray.map(x => if x == 1 then true else false)
+    val admission = Tensor1(Axis[Case] -> dfCleaned.size).fromArray(
+      dfCleaned.cols.Admit.toArray.map(x => if x == 1 then true else false)
     )
     val burnIn = 200
     val nSamples = 200
