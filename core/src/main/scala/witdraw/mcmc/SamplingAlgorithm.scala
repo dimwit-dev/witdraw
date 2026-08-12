@@ -57,10 +57,12 @@ case class OptimizerKernelState[P, S](
 ) extends KernelState[P]
 
 object OptimizerKernel:
-  def toSamplingAlgorithm[P: TensorTree, V: IsFloating, St[_]](
+  def toSamplingAlgorithm[P: TensorTree, St[_]](
       optimizer: GradientOptimizer[St],
       gradFn: P => Grad[P]
-  )(using TreeOf[P, V]): SamplingAlgorithm[
+  )(using
+      TreeOf[P, Float32]
+  ): SamplingAlgorithm[
     P,
     OptimizerKernelState[P, St[P]],
     Unit
