@@ -12,7 +12,7 @@ import dimwit.stats.MVNormal
 import dimwit.nn.ActivationFunctions
 import dimwit.stats.Bernoulli
 import witdraw.ForwardSampler
-import plotwit.plotting.PlotTargets.websocket
+import plotwit.PlotTargets.websocket
 import plotwit.{display, grid}
 import witdraw.distributions.LKJ
 import witdraw.ModelScorer

@@ -7,9 +7,9 @@ import witdraw.*
 import witdraw.mcmc.OptimizerKernel
 import witdraw.mcmc.NUTSAlgorithm
 
-import plotwit.plotting.PlotTargets.websocket
+import plotwit.PlotTargets.websocket
 import plotwit.{display, grid}
-import plotwit.plotting.plots.histogramPlot
+import plotwit.plots.histogramPlot
 
 object WaterLandExample:
 

@@ -5,7 +5,6 @@ import dimwit.*
 import dimwit.autodiff.{Autodiff, Grad}
 import dimwit.random.Random.Key
 import dimwit.optimizer.GradientOptimizer
-import dimwit.tensortree.FloatTreeFor
 
 /** The state carried between kernel steps. Every state must expose its chain
   * position.
@@ -58,12 +57,12 @@ case class OptimizerKernelState[P, S](
 ) extends KernelState[P]
 
 object OptimizerKernel:
-  def toSamplingAlgorithm[P: TensorTree: FloatTreeFor[Float32]](
-      optimizer: GradientOptimizer,
+  def toSamplingAlgorithm[P: TensorTree, V: IsFloating, St[_]](
+      optimizer: GradientOptimizer[St],
       gradFn: P => Grad[P]
-  ): SamplingAlgorithm[
+  )(using TreeOf[P, V]): SamplingAlgorithm[
     P,
-    OptimizerKernelState[P, optimizer.State[P, Float32]],
+    OptimizerKernelState[P, St[P]],
     Unit
   ] =
     SamplingAlgorithm(

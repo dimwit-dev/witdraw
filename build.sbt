@@ -35,7 +35,7 @@ lazy val examples = (project in file("examples"))
     libraryDependencies ++= Seq(
       "org.scala-lang" %% "toolkit" % "0.9.1",
       "ch.contrafactus" %% "witling-core" % "0.1-SNAPSHOT" changing (),
-      "ch.contrafactus" %% "plotwit-core" % "0.1-SNAPSHOT" changing ()
+      "ch.contrafactus" %% "plotwit-core" % "0.1.0-SNAPSHOT" changing ()
     ),
     fork := true,
     run / baseDirectory := (ThisBuild / baseDirectory).value / "examples"

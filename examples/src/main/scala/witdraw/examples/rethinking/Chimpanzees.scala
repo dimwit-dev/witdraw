@@ -15,11 +15,11 @@ import witdraw.Site
 import witdraw.given
 import witling.DataFrame
 import witdraw.mcmc.NUTSAlgorithm
-import plotwit.plotting.PlotTargets.websocket
+import plotwit.PlotTargets.websocket
 import plotwit.{display, grid}
 
 import java.io.File
-import plotwit.plotting.plots.histogramPlot
+import plotwit.plots.histogramPlot
 
 object Chimpanzees:
 
