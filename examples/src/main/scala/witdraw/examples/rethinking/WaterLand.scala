@@ -62,7 +62,7 @@ object WaterLandExample:
     val nSamples = 2000
 
     val ok = OptimizerKernel.toSamplingAlgorithm(
-      optimizer = dimwit.optimizer.Adam(learningRate = -0.1f),
+      optimizer = dimwit.optimizer.Adam(learningRate = Tensor0(-0.1f)),
       gradFn = (params: PosteriorParams) => Autodiff.grad(logDensity)(params)
     )
 
