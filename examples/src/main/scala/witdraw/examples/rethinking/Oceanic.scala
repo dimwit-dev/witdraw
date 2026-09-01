@@ -25,47 +25,33 @@ object OceanicExample:
   ) =
     val numSocieties = 10
     ProbProg:
-      val globalIntercept = RandomVar(
-        site = GlobalIntercept,
-        dist = Normal(Tensor0(0.0f), Tensor0(10.0f))
-      )
-      val eta2: Tensor0[Float32] = RandomVar(
-        site = Eta2,
-        dist = HalfCauchy(Tensor0(0.0f), Tensor0(1.0f))
-      )
+      val globalIntercept =
+        GlobalIntercept ~ Normal(Tensor0(0.0f), Tensor0(10.0f))
 
-      val rho2: Tensor0[Float32] = RandomVar(
-        site = Rho2,
-        dist = HalfCauchy(Tensor0(0.0f), Tensor0(1.0f))
-      )
+      val eta2: Tensor0[Float32] =
+        Eta2 ~ HalfCauchy(Tensor0(0.0f), Tensor0(1.0f))
+
+      val rho2: Tensor0[Float32] =
+        Rho2 ~ HalfCauchy(Tensor0(0.0f), Tensor0(1.0f))
 
       val squaredists = distances * distances
       val K: Tensor2[Society, Prime[Society], Float32] =
         eta2 *! (-rho2 *! squaredists).exp + Tensor2
           .eye(Axis[Society] -> numSocieties) *! Tensor0(0.01f)
 
-      val societyIntercept = RandomVar(
-        site = SocietyIntercept,
-        dist = MVNormal(
-          mean = Tensor1(Axis[Society] -> numSocieties).fill(0f),
-          covariance = K
-        )
+      val societyIntercept = SocietyIntercept ~ MVNormal(
+        mean = Tensor1(Axis[Society] -> numSocieties).fill(0f),
+        covariance = K
       )
-      val societySlope = RandomVar(
-        site = SocietySlope,
-        dist = Normal(
-          Tensor0(0f),
-          Tensor0(1f)
-        )
-      )
+
+      val societySlope = SocietySlope ~ Normal(Tensor0(0f), Tensor0(1f))
+
       val logToolRate =
         globalIntercept +! societyIntercept + societySlope *! population.log
       val toolRate = logToolRate.exp
 
-      val numTools = RandomVar(
-        site = NumTools,
-        dist = Poisson(toolRate)
-      )
+      val numTools = NumTools ~ Poisson(toolRate)
+
       (
         globalIntercept = globalIntercept,
         societyIntercept = societyIntercept,

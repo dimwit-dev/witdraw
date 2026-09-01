@@ -1,6 +1,5 @@
 package witdraw.examples.rethinking
 
-import deepwit.base.ActivationFunction
 import dimwit.*
 import dimwit.stats.Bernoulli
 import dimwit.stats.Exponential
@@ -20,6 +19,8 @@ import plotwit.{display, grid}
 
 import java.io.File
 import plotwit.plots.histogramPlot
+import dimwit.nn.ActivationFunctions
+import witdraw.~
 
 object Chimpanzees:
 
@@ -80,27 +81,20 @@ object Chimpanzees:
     val model = ProbProg:
 
       // How much extra pull-left tendency when a partner is present
-      val partnerEffect = RandomVar(
-        site = PartnerEffect,
-        dist = Normal(Tensor0(0f), Tensor0(10f))
-      )
+      val partnerEffect = PartnerEffect ~ Normal(Tensor0(0f), Tensor0(10f))
+
       // Between-chimp spread — smaller = more pooling toward population mean
-      val chimpVariability =
-        RandomVar(site = ChimpVariability, dist = Exponential(Tensor0(1f)))
+      val chimpVariability = ChimpVariability ~ Exponential(Tensor0(1f))
 
       // Per-chimp intercepts drawn from a common population distribution
-      val chimpIntercept = RandomVar(
-        site = ChimpIntercept,
-        dist = Normal(
-          Tensor1(Axis[Chimp] -> nChimps).fill(0f),
-          Tensor1(Axis[Chimp] -> nChimps).fill(1f) *! chimpVariability
-        )
+      val chimpIntercept = ChimpIntercept ~ Normal(
+        Tensor1(Axis[Chimp] -> nChimps).fill(0f),
+        Tensor1(Axis[Chimp] -> nChimps).fill(1f) *! chimpVariability
       )
+
       // Shared baseline across all chimps
-      val populationIntercept = RandomVar(
-        site = PopulationIntercept,
-        dist = Normal(Tensor0(0f), Tensor0(10f))
-      )
+      val populationIntercept =
+        PopulationIntercept ~ Normal(Tensor0(0f), Tensor0(10f))
       // Look up each trial's chimp intercept
       val chimpBaselinePerTrial: Tensor1[Trial, Float32] =
         chimpIntercept
@@ -108,21 +102,18 @@ object Chimpanzees:
           .slice(Axis[Trial].at(chimpIndexPerTrial))
 
       // Effect of the prosocial option's side
-      val prosocialEffect = RandomVar(
-        site = ProsocialEffect,
-        dist = Normal(Tensor0(0f), Tensor0(10f))
-      )
+      val prosocialEffect = ProsocialEffect ~ Normal(Tensor0(0f), Tensor0(10f))
+
       // Partner modulation: partnerEffect is only active when a partner is present
       val partnerModulation = partnerEffect *! hasPartner.asFloat32
       // Log-odds → probability of pulling left
       val probPullLeft = Prob(
-        ActivationFunction.sigmoid(
+        ActivationFunctions.sigmoid(
           populationIntercept +! chimpBaselinePerTrial +
             ((prosocialEffect +! partnerModulation) * prosocialOnLeft.asFloat32)
         )
       )
-      val pulledLeft =
-        RandomVar(site = PulledLeft, dist = Bernoulli(probPullLeft))
+      val pulledLeft = PulledLeft ~ Bernoulli(probPullLeft)
       (
         chimpIntercept = chimpIntercept,
         populationIntercept = populationIntercept,

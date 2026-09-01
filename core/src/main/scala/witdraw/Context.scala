@@ -116,6 +116,15 @@ def RandomVar[Ten <: Tensor[?, ?]](
     dist: Distribution[ShapeOf[Ten], ElemOf[Ten]]
 )(using ctx: ProbContext): Ten = ctx.randomVar(site, dist)
 
+extension [Ten <: Tensor[?, ?]](site: SiteVariable[Ten])
+  /** Syntax to say that a site is distributed according to the given
+    * distribution. Produces a value from the distribution (either sampled or
+    * observed, depending on that context)
+    */
+  infix def ~(dist: Distribution[ShapeOf[Ten], ElemOf[Ten]])(using
+      ctx: ProbContext
+  ): Ten = ctx.randomVar(site, dist)
+
 /** Forward-sampling interpreter — result is the model’s return value.
   *
   *   - Free [[Site]]: sampled from the distribution.

@@ -20,6 +20,7 @@ import witdraw.mcmc.NUTSAlgorithm
 import dimwit.jax.Jax
 import witling.updated
 import witling.Col
+import witdraw.~
 
 class IndependentMultivariateDist[LBatch: Label, L: Label](
     extent: AxisExtent[LBatch],
@@ -104,16 +105,14 @@ object AdmissionEx:
 
     val model = witdraw.ProbProg[Result]:
 
-      val alpha = RandomVar(Alpha, Normal(Tensor0(0f), Tensor0(10f)))
-      val beta = RandomVar(Beta, Normal(Tensor0(0f), Tensor0(1f)))
+      val alpha = Alpha ~ Normal(Tensor0(0f), Tensor0(10f))
+      val beta = Beta ~ Normal(Tensor0(0f), Tensor0(1f))
 
       // this is wrong
       val mu_ab = stack(Seq(Tensor0(0f), Tensor0(0f)), Axis[AB])
       val sigma_ab = stack(Seq(Tensor0(1f), Tensor0(1f)), Axis[AB])
-      val r = RandomVar(
-        R,
-        LKJ(Tensor0(2f), Shape(Axis[AB] -> 2, Axis[Prime[AB]] -> 2))
-      )
+      val r = R ~ LKJ(Tensor0(2f), Shape(Axis[AB] -> 2, Axis[Prime[AB]] -> 2))
+
       val cov_ab = sigma_ab.outerProduct(sigma_ab) * r
       val mvDist = MVNormal(mu_ab, cov_ab)
 
@@ -124,7 +123,7 @@ object AdmissionEx:
       // Sample per department a length-2 vector [alphaDept, betaDept]
       // Shape: Tensor2[Dept, AB, Float32]
 
-      val abPerDept = RandomVar(DeptAB, indepMVNormal)
+      val abPerDept = DeptAB ~ indepMVNormal
 
       // Split that tensor into separate alphaDept and betaDept along AB
       val alphaDeptValues =

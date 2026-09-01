@@ -17,14 +17,8 @@ object WaterLandExample:
   object WaterCount extends Site[Tensor0[Int32]]
 
   def model(numTosses: Int) = ProbProg:
-    val wp = RandomVar(
-      site = WaterProp,
-      dist = Uniform(Tensor0(0.0f), Tensor0(1.0f))
-    )
-    val wc = RandomVar(
-      site = WaterCount,
-      dist = Binomial(Tensor0(numTosses), Prob(wp))
-    )
+    val wp = WaterProp ~ Uniform(Tensor0(0.0f), Tensor0(1.0f))
+    val wc = WaterCount ~ Binomial(Tensor0(numTosses), Prob(wp))
     (waterProp = wp, waterCount = wc)
 
   @main
