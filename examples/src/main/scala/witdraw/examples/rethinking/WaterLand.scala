@@ -29,21 +29,20 @@ object WaterLandExample:
 
     trait Sample derives Label
 
-    val priorSamples =
-      Key(42).splitvmap(Axis[Sample] -> 10000): key =>
-        ForwardSampler.run(key)(model(numTosses)).waterProp
+    val samples =
+      Key(42).split(10000).map(key => ForwardSampler.run(key)(model(numTosses)))
 
-    val priorPredictiveSamples =
-      Key(42).splitvmap(Axis[Sample] -> 10000): key =>
-        ForwardSampler.run(key)(model(numTosses)).waterCount
+    val priorSamples = samples.map(_.waterProp)
+    val priorPredictiveSamples = samples.map(_.waterCount)
 
     val predictiveSamples =
-      Key(42).splitvmap(Axis[Sample] -> 10000): key =>
-        ForwardSampler
-          .run(key)(
-            model(numTosses).observe(WaterProp := Prob(Tensor0(0.7f)))
-          )
-          .waterCount
+      Key(42)
+        .split(10000)
+        .map: key =>
+          ForwardSampler
+            .run(key)(
+              model(numTosses).observe(WaterProp := Prob(Tensor0(0.7f)))
+            )
 
     type PosteriorParams = (waterProp: Tensor0[Float32])
 
