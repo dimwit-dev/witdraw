@@ -1,3 +1,5 @@
 addSbtPlugin("org.scalameta" % "sbt-scalafmt" % "2.5.5")
 addSbtPlugin("org.scalameta" % "sbt-mdoc" % "2.8.2")
 libraryDependencies += "ai.kien" %% "python-native-libs" % "0.2.2"
+addSbtPlugin("org.xerial.sbt" % "sbt-sonatype" % "3.11.3")
+addSbtPlugin("com.github.sbt" % "sbt-pgp" % "2.3.1")
