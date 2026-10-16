@@ -17,8 +17,8 @@ object WaterLandExample:
   object WaterCount extends Site[Tensor0[Int32]]
 
   def model(numTosses: Int) = ProbProg:
-    val wp = WaterProp ~ Uniform(Tensor0(0.0f), Tensor0(1.0f))
-    val wc = WaterCount ~ Binomial(Tensor0(numTosses), Prob(wp))
+    val wp = WaterProp ~ Uniform(0f, 1f)
+    val wc = WaterCount ~ Binomial(numTosses, Prob(wp))
     (waterProp = wp, waterCount = wc)
 
   @main
@@ -41,7 +41,7 @@ object WaterLandExample:
         .map: key =>
           ForwardSampler
             .run(key)(
-              model(numTosses).observe(WaterProp := Prob(Tensor0(0.7f)))
+              model(numTosses).observe(WaterProp := Prob(0.7f))
             )
 
     type PosteriorParams = (waterProp: Tensor0[Float32])
@@ -55,7 +55,7 @@ object WaterLandExample:
     val nSamples = 2000
 
     val ok = OptimizerKernel.toSamplingAlgorithm(
-      optimizer = dimwit.optimizer.Adam(learningRate = Tensor0(-0.1f)),
+      optimizer = dimwit.optimizer.Adam(learningRate = -0.1f),
       gradFn = (params: PosteriorParams) => Autodiff.grad(logDensity)(params)
     )
 

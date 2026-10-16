@@ -36,8 +36,9 @@ object OceanicExample:
 
       val squaredists = distances * distances
       val K: Tensor2[Society, Prime[Society], Float32] =
-        eta2 *! (-rho2 *! squaredists).exp + Tensor2
-          .eye(Axis[Society] -> numSocieties) *! Tensor0(0.01f)
+        eta2 *! (-rho2 *! squaredists).exp + Tensor2(
+          Axis[Society] -> numSocieties
+        ).eye *! Tensor0(0.01f)
 
       val societyIntercept = SocietyIntercept ~ MVNormal(
         mean = Tensor1(Axis[Society] -> numSocieties).fill(0f),

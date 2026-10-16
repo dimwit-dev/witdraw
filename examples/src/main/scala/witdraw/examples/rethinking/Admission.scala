@@ -9,7 +9,6 @@ import witdraw.Site
 import witdraw.RandomVar
 import dimwit.stats.Normal
 import dimwit.stats.MVNormal
-import dimwit.nn.ActivationFunctions
 import dimwit.stats.Bernoulli
 import witdraw.ForwardSampler
 import plotwit.PlotTargets.websocket
@@ -105,8 +104,8 @@ object AdmissionEx:
 
     val model = witdraw.ProbProg[Result]:
 
-      val alpha = Alpha ~ Normal(Tensor0(0f), Tensor0(10f))
-      val beta = Beta ~ Normal(Tensor0(0f), Tensor0(1f))
+      val alpha = Alpha ~ Normal(0f, 10f)
+      val beta = Beta ~ Normal(0f, 1f)
 
       // this is wrong
       val mu_ab = stack(Seq(Tensor0(0f), Tensor0(0f)), Axis[AB])
@@ -136,7 +135,7 @@ object AdmissionEx:
       val betaPerCase: Tensor1[Case, Float32] =
         betaDeptValues.relabelTo(Axis[Case]).slice(Axis[Case].at(deptIndex))
       val admissionProb = Prob(
-        ActivationFunctions.sigmoid(
+        Tensor.sigmoid(
           alpha +! alphaPerCase + betaPerCase * male.asType(VType[Float32])
         )
       )
@@ -177,7 +176,7 @@ object AdmissionEx:
     val initialParams = Posterior(
       alpha = Tensor0(0f),
       beta = Tensor0(0f),
-      r = Tensor2.eye(Axis[AB] -> 2),
+      r = Tensor2(Axis[AB] -> 2).eye,
       alphaDept = Tensor1(Axis[Dept] -> nDepts).fill(0f),
       betaDept = Tensor1(Axis[Dept] -> nDepts).fill(0f),
       deptAB = Tensor2(Axis[Dept] -> nDepts, Axis[AB] -> 2).fill(1f)

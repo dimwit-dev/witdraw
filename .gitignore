@@ -21,3 +21,4 @@ plotting/*/.scala-build
 ide-*.json
 .witdraw-docs
 uv.lock
+witdraw-shape/target

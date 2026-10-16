@@ -2,7 +2,7 @@ name := "witdraw"
 
 version := "0.1.0-SNAPSHOT"
 
-ThisBuild / scalaVersion := "3.8.1"
+ThisBuild / scalaVersion := "3.9.0"
 ThisBuild / resolvers += "Sonatype OSS Snapshots" at "https://oss.sonatype.org/content/repositories/snapshots"
 ThisBuild / organization := "ch.contrafactus"
 
@@ -22,8 +22,8 @@ lazy val core = (project in file("core"))
   .settings(
     name := "witdraw-core",
     libraryDependencies ++= Seq(
-      "ch.contrafactus" %% "dimwit-core" % "0.1.0-SNAPSHOT" changing (),
-      "ch.contrafactus" %% "deepwit-core" % "0.1.0-SNAPSHOT" changing ()
+      "ch.contrafactus" %% "dimwit-core" % "0.2.0" changing (),
+      "ch.contrafactus" %% "deepwit-core" % "0.2-SNAPSHOT" changing ()
     ),
     fork := true
   )
@@ -35,7 +35,7 @@ lazy val examples = (project in file("examples"))
     libraryDependencies ++= Seq(
       "org.scala-lang" %% "toolkit" % "0.9.1",
       "ch.contrafactus" %% "witling-core" % "0.1-SNAPSHOT" changing (),
-      "ch.contrafactus" %% "plotwit-core" % "0.1.0-SNAPSHOT" changing ()
+      "ch.contrafactus" %% "plotwit-core" % "0.2-SNAPSHOT" changing ()
     ),
     fork := true,
     run / baseDirectory := (ThisBuild / baseDirectory).value / "examples"

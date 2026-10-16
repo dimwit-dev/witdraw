@@ -6,7 +6,7 @@
 >
 > **NOT FOR HUMAN CONSUMPTION**: This document contains exhaustive, verbose examples optimized for machine learning model consumption. Human developers should refer to standard documentation.
 >
-> **AUTO-GENERATED**: This file is generated from `docs/AGENTS.md` using [mdoc](https://scalameta.org/mdoc/). All code examples are verified at compile-time and execution-time. Last generated: 2026-01-19
+> **AUTO-GENERATED**: This file is generated from `docs/AGENTS.md` using [mdoc](https://scalameta.org/mdoc/). All code examples are verified at compile-time and execution-time. Last generated: 2026-09-05
 >
 > **PURPOSE**: Provide comprehensive, executable API examples with explicit error cases to train coding agents on proper DimWit usage patterns.
 
@@ -104,9 +104,9 @@ val wrong = t.sum(Axis[C])
 //     dimwit.tensor.ShapeTypeHelpers.AxisRemover.bridge[
 //       (repl.MdocSession.MdocApp.A, repl.MdocSession.MdocApp.B),
 //       repl.MdocSession.MdocApp.C, R](
-//       dimwit.tensor.ShapeTypeHelpers.AxisIndex.tail[repl.MdocSession.MdocApp.A,
+//       dimwit.tensor.ShapeTypeHelpers.AxisIndex.search[repl.MdocSession.MdocApp.A,
 //         repl.MdocSession.MdocApp.B *: EmptyTuple.type, repl.MdocSession.MdocApp.C](
-//         dimwit.tensor.ShapeTypeHelpers.AxisIndex.tail[repl.MdocSession.MdocApp.B,
+//         dimwit.tensor.ShapeTypeHelpers.AxisIndex.search[repl.MdocSession.MdocApp.B,
 //           EmptyTuple.type, repl.MdocSession.MdocApp.C](
 //           dimwit.tensor.ShapeTypeHelpers.AxisIndex.concatRight[A², B², L])
 //       ),
@@ -209,7 +209,7 @@ val summed = wrongAxis.sum(Axis[B])  // B not in shape!
 // 
 //     dimwit.tensor.ShapeTypeHelpers.AxisRemover.bridge[
 //       Tuple1[repl.MdocSession.MdocApp.A], repl.MdocSession.MdocApp.B, R](
-//       dimwit.tensor.ShapeTypeHelpers.AxisIndex.tail[repl.MdocSession.MdocApp.A,
+//       dimwit.tensor.ShapeTypeHelpers.AxisIndex.search[repl.MdocSession.MdocApp.A,
 //         EmptyTuple.type, repl.MdocSession.MdocApp.B](
 //         dimwit.tensor.ShapeTypeHelpers.AxisIndex.concatRight[A², B², L]),
 //     ???)
@@ -253,7 +253,7 @@ val divided = t / t  // [[1, 1], [1, 1]]
 val absolute = t.abs
 val exponential = t.exp
 val logarithm = (t +! Tensor0(1.0f)).log  // Avoid log(0)
-val power = t.pow(Tensor0(2.0f))
+val power = t.pow(2.0f)
 val sqrt = t.sqrt
 val sign = t.sign
 
@@ -264,7 +264,28 @@ val tanh = t.tanh
 
 // Clipping
 val clipped = t.clip(Tensor0(1.5f), Tensor0(3.5f))
+
+// Logical operations on Bool tensors (exact shape match)
+val bx = Tensor2(Axis[A], Axis[B]).fromArray(Array(Array(true, false), Array(false, true)))
+val by = Tensor2(Axis[A], Axis[B]).fromArray(Array(Array(true, true), Array(false, false)))
+
+val both = bx and by  // [[true, false], [false, false]]
+val either = bx or by  // [[true, true], [false, true]]
+val exclusive = bx xor by  // [[false, true], [false, true]]
+val negated = !bx  // [[false, true], [true, false]]
+
+// Broadcasting variants (! suffix, as for +! / *!)
+val row = Tensor1(Axis[A]).fromArray(Array(true, false))
+val bothB = bx and_! row  // [[true, false], [false, false]]
+val eitherB = bx or_! row  // [[true, true], [false, true]]
+val exclusiveB = bx xor_! row  // [[false, true], [false, true]]
+
+// Typical use: combine comparison masks
+val inRange = (t > Tensor.like(t).fill(1.0f)) and (t < Tensor.like(t).fill(4.0f))
 ```
+
+**Note**: `and` / `or` / `xor` are elementwise and always evaluate both operands - unlike Scala's
+short-circuiting `&&` / `||` on `Boolean`, which is why those symbols are deliberately not provided.
 
 ### Reduction Operations
 
@@ -316,9 +337,9 @@ val wrong = t.sum(Axis[C])
 // 
 //     dimwit.tensor.ShapeTypeHelpers.AxisRemover.bridge[
 //       (MdocApp0.this.A, MdocApp0.this.B), MdocApp0.this.C, R](
-//       dimwit.tensor.ShapeTypeHelpers.AxisIndex.tail[MdocApp0.this.A,
+//       dimwit.tensor.ShapeTypeHelpers.AxisIndex.search[MdocApp0.this.A,
 //         MdocApp0.this.B *: EmptyTuple.type, MdocApp0.this.C](
-//         dimwit.tensor.ShapeTypeHelpers.AxisIndex.tail[MdocApp0.this.B,
+//         dimwit.tensor.ShapeTypeHelpers.AxisIndex.search[MdocApp0.this.B,
 //           EmptyTuple.type, MdocApp0.this.C](
 //           dimwit.tensor.ShapeTypeHelpers.AxisIndex.concatRight[A², B², L])
 //       ),
@@ -340,7 +361,7 @@ val wrong = t.sum(Axis[C])
 //     dimwit.tensor.DType.Float32] in class MdocApp0 at line 53 and
 // val t:
 //   dimwit.tensor.Tensor2[MdocApp0.this.A, MdocApp0.this.B,
-//     dimwit.tensor.DType.Float32] in class MdocApp0 at line 88
+//     dimwit.tensor.DType.Float32] in class MdocApp0 at line 99
 //
 ```
 
@@ -368,7 +389,7 @@ val scalarBroadcast = Tensor0(5.0f).broadcastTo(tensor.shape)
 val greater = tensor > Tensor0(25.0f).broadcastTo(tensor.shape)
 ```
 
-**Important**: Standard operators `+`, `-`, `*`, `/` require **exact shape match**. Use `+!`, `-!`, `*!`, `/!` for broadcasting.
+**Important**: Standard operators `+`, `-`, `*`, `/` require **exact shape match**. Use `+!`, `-!`, `*!`, `/!` for broadcasting. The same holds for the logical operators on `Bool` tensors: `and`, `or`, `xor` require an exact shape match, `and_!`, `or_!`, `xor_!` broadcast.
 
 ```scala
 val t = Tensor2(Axis[A], Axis[B]).fromArray(Array(Array(1.0f, 2.0f)))
@@ -377,7 +398,7 @@ val wrong = t + 5.0f  // Use +! instead
 // error: 
 // Found:    (5.0f : Float)
 // Required: dimwit.tensor.Tensor[(MdocApp0.this.A, MdocApp0.this.B),
-//   (dimwit.tensor.DType.Float32 : dimwit.tensor.DType)]
+//   dimwit.tensor.DType.Float32]
 // error: 
 // Conflicting definitions:
 // val t:
@@ -385,7 +406,7 @@ val wrong = t + 5.0f  // Use +! instead
 //     dimwit.tensor.DType.Float32] in class MdocApp0 at line 53 and
 // val t:
 //   dimwit.tensor.Tensor2[MdocApp0.this.A, MdocApp0.this.B,
-//     dimwit.tensor.DType.Float32] in class MdocApp0 at line 97
+//     dimwit.tensor.DType.Float32] in class MdocApp0 at line 108
 //
 ```
 
@@ -437,9 +458,9 @@ val wrong = m1.dot(Axis[B])(m2)
 // 
 //     dimwit.tensor.ShapeTypeHelpers.AxisRemover.bridge[
 //       (MdocApp1.this.C, MdocApp1.this.D), MdocApp1.this.B, R](
-//       dimwit.tensor.ShapeTypeHelpers.AxisIndex.tail[MdocApp1.this.C,
+//       dimwit.tensor.ShapeTypeHelpers.AxisIndex.search[MdocApp1.this.C,
 //         MdocApp1.this.D *: EmptyTuple.type, MdocApp1.this.B](
-//         dimwit.tensor.ShapeTypeHelpers.AxisIndex.tail[MdocApp1.this.D,
+//         dimwit.tensor.ShapeTypeHelpers.AxisIndex.search[MdocApp1.this.D,
 //           EmptyTuple.type, MdocApp1.this.B](
 //           dimwit.tensor.ShapeTypeHelpers.AxisIndex.concatRight[A, B², L])
 //       ),
@@ -456,9 +477,9 @@ val wrong = m1.dot(Axis[B])(m2)
 // 
 //     dimwit.tensor.ShapeTypeHelpers.AxisRemover.bridge[
 //       (MdocApp1.this.C, MdocApp1.this.D), MdocApp1.this.B, R](
-//       dimwit.tensor.ShapeTypeHelpers.AxisIndex.tail[MdocApp1.this.C,
+//       dimwit.tensor.ShapeTypeHelpers.AxisIndex.search[MdocApp1.this.C,
 //         MdocApp1.this.D *: EmptyTuple.type, MdocApp1.this.B](
-//         dimwit.tensor.ShapeTypeHelpers.AxisIndex.tail[MdocApp1.this.D,
+//         dimwit.tensor.ShapeTypeHelpers.AxisIndex.search[MdocApp1.this.D,
 //           EmptyTuple.type, MdocApp1.this.B](
 //           dimwit.tensor.ShapeTypeHelpers.AxisIndex.concatRight[A, B², L])
 //       ),
@@ -475,19 +496,19 @@ val wrong = m1.dot(Axis[B])(m2)
 // Conflicting definitions:
 // val m1:
 //   dimwit.tensor.Tensor2[MdocApp1.this.A, MdocApp1.this.B,
-//     dimwit.tensor.DType.Float32] in class MdocApp1 at line 119 and
+//     dimwit.tensor.DType.Float32] in class MdocApp1 at line 130 and
 // val m1:
 //   dimwit.tensor.Tensor2[MdocApp1.this.A, MdocApp1.this.B,
-//     dimwit.tensor.DType.Float32] in class MdocApp1 at line 122
+//     dimwit.tensor.DType.Float32] in class MdocApp1 at line 133
 // 
 // error: 
 // Conflicting definitions:
 // val m2:
 //   dimwit.tensor.Tensor2[MdocApp1.this.B, MdocApp1.this.C,
-//     dimwit.tensor.DType.Float32] in class MdocApp1 at line 120 and
+//     dimwit.tensor.DType.Float32] in class MdocApp1 at line 131 and
 // val m2:
 //   dimwit.tensor.Tensor2[MdocApp1.this.C, MdocApp1.this.D,
-//     dimwit.tensor.DType.Float32] in class MdocApp1 at line 123
+//     dimwit.tensor.DType.Float32] in class MdocApp1 at line 134
 //
 ```
 
@@ -614,7 +635,7 @@ val t2 = Tensor2(Axis[A], Axis[B]).fromArray(Array(Array(10.0f, 20.0f), Array(30
 
 // Compute L2 distance between corresponding rows
 def l2Distance(v1: Tensor1[B, Float32], v2: Tensor1[B, Float32]): Tensor0[Float32] =
-  (v1 - v2).pow(Tensor0(2.0f)).sum.sqrt
+  (v1 - v2).pow(2.0f).sum.sqrt
 
 val distances: Tensor1[A, Float32] = zipvmap(Axis[A])(t1, t2)(l2Distance)
 println(s"L2 distances: ${distances}")
@@ -638,7 +659,7 @@ val matrix = Tensor2(Axis[A], Axis[B]).fromArray(
 
 // Normalize each row by its L2 norm
 val normalized = matrix.vapply(Axis[A]) { row =>
-  val norm = row.pow(Tensor0(2.0f)).sum.sqrt + Tensor0(1e-8f)
+  val norm = row.pow(2.0f).sum.sqrt + Tensor0(1e-8f)
   row /! norm
 }
 
@@ -720,7 +741,7 @@ println(s"f'''(3) = ${dddf2(x2).value.item}") // 0.0
 ```scala
 // f(x, y) = (x + 2y)²
 def twoParam(x: Tensor1[A, Float32], y: Tensor1[A, Float32]): Tensor0[Float32] =
-  ((x + (y *! Tensor0(2.0f))).pow(Tensor0(2.0f))).sum
+  ((x + (y *! Tensor0(2.0f))).pow(2.0f)).sum
 
 val dtwoParam = Autodiff.grad(twoParam)
 
@@ -758,7 +779,8 @@ Use **case classes** to group parameters. DimWit automatically derives `TensorTr
 
 ```scala
 import dimwit.*
-import dimwit.autodiff.{TensorTree, FloatTree, Autodiff}
+import dimwit.autodiff.Autodiff
+import dimwit.tensortree.TensorTree
 
 trait Feature derives Label
 trait Hidden derives Label
@@ -776,7 +798,7 @@ def linear(params: LinearParams)(input: Tensor1[Feature, Float32]): Tensor1[Hidd
 // Define loss function
 def loss(data: Tensor1[Feature, Float32], target: Tensor1[Hidden, Float32])(params: LinearParams): Tensor0[Float32] =
   val prediction = linear(params)(data)
-  (prediction - target).pow(Tensor0(2.0f)).sum
+  (prediction - target).pow(2.0f).sum
 
 // Compute gradient with respect to ALL parameters
 val sampleData = Tensor1(Axis[Feature]).fromArray(Array(1.0f, 2.0f, 3.0f))
@@ -884,7 +906,7 @@ def mse(data: Tensor2[Batch, Feature, Float32], labels: Tensor1[Batch, Float32])
   val predictions = data.vmap(Axis[Batch]) { sample =>
     sample.dot(Axis[Feature])(params.w) + params.b
   }
-  ((predictions - labels).pow(Tensor0(2.0f))).mean
+  ((predictions - labels).pow(2.0f)).mean
 
 // Initialize parameters
 val key = Random.Key(42)
@@ -902,7 +924,7 @@ val lossFunc = mse(trainData, trainLabels)
 val gradFunc = Autodiff.grad(lossFunc)
 
 // Create optimizer
-val optimizer = GradientDescent(learningRate = Tensor0(0.01f))
+val optimizer = GradientDescent(learningRate = 0.01f)
 
 // Training loop with iterator
 val trained = optimizer.iterate(initModelParams)(gradFunc)
@@ -919,7 +941,7 @@ val trained = optimizer.iterate(initModelParams)(gradFunc)
 import dimwit.optimizer.Lion
 
 // Lion optimizer with momentum
-val lionOptimizer = Lion(learningRate = Tensor0(1e-3f), beta1 = Tensor0(0.9f), beta2 = Tensor0(0.99f), weightDecay = Tensor0(0.0f))
+val lionOptimizer = Lion(learningRate = 1e-3f, beta1 = 0.9f, beta2 = 0.99f, weightDecay = 0.0f)
 
 // Training with Lion
 val trainedLion = lionOptimizer.iterate(initModelParams)(gradFunc)
@@ -953,7 +975,7 @@ def regressionLoss(x: Tensor2[Sample, InputDim, Float32], y: Tensor1[Sample, Flo
   val predictions = x.vmap(Axis[Sample]) { xi =>
     xi.dot(Axis[InputDim])(params.slope) + params.intercept
   }
-  ((predictions - y).pow(Tensor0(2.0f))).mean
+  ((predictions - y).pow(2.0f)).mean
 
 // Initialize
 val initSlope = Tensor(Shape1(Axis[InputDim] -> 1)).fill(0.0f)
@@ -962,7 +984,7 @@ val initRegressionParams = RegressionParams(initSlope, initIntercept)
 
 // Train
 val regressionGrad = Autodiff.grad(regressionLoss(xData, yData))
-val gdOptimizer = GradientDescent(learningRate = Tensor0(0.1f))
+val gdOptimizer = GradientDescent(learningRate = 0.1f)
 
 val finalParams = gdOptimizer.iterate(initRegressionParams)(regressionGrad)
   .take(100)
@@ -993,7 +1015,7 @@ def complexComputation(x: Tensor1[A, Float32]): Tensor1[A, Float32] =
   val y = x.exp
   val z = y.log
   val w = z.sin
-  w.pow(Tensor0(2.0f))
+  w.pow(2.0f)
 
 // JIT compile the function
 val jitComplex = jit(complexComputation)
@@ -1043,11 +1065,12 @@ val (key1, key2) = rootKey.split2()
 val keys = rootKey.split(5)  // Split into 5 keys
 
 // Generate random numbers
-val normalDist = Normal(loc = Tensor0(0.0f), scale = Tensor0(1.0f))
+// `scalar` accepts plain numbers directly (no Tensor0 wrapping needed)
+val normalDist = Normal.scalar(loc = 0.0f, scale = 1.0f)
 val randomSample = normalDist.sample(key1)
 println(s"Normal samples: ${randomSample}")
 
-val uniformDist = Uniform(low = Tensor0(0.0f), high = Tensor0(1.0f))
+val uniformDist = Uniform.scalar(low = 0.0f, high = 1.0f)
 val uniformSample = uniformDist.sample(key2)
 println(s"Uniform samples: ${uniformSample}")
 
@@ -1056,6 +1079,24 @@ val (permKey, _) = rootKey.split2()
 val shuffled = Random.permutation(Axis[A] -> 5)(permKey)
 println(s"Shuffled: ${shuffled}")
 ```
+
+### Scalar Distributions
+
+Distribution constructors normally take `Tensor`/`Tensor0` arguments (e.g. `Normal(loc, scale)` where `loc`/`scale` are tensors of matching shape). Every distribution also provides a `scalar` constructor for the common case where all of its parameters are plain numbers, accepting them directly instead of requiring `Tensor0(...)` wrapping, and returning a rank-0 (`Tensor0`-shaped) distribution:
+
+```scala
+import dimwit.stats.{Beta, Binomial, DiscreteUniform, Exponential, Poisson, StudentT, TruncatedNormal}
+
+val betaDist = Beta.scalar(alpha = 2.0f, beta = 3.0f)
+val studentTDist = StudentT.scalar(df = 5.0f, loc = 0.0f, scale = 1.0f)
+val truncatedNormalDist = TruncatedNormal.scalar(loc = 0.0f, scale = 1.0f, low = -1.0f, high = 1.0f)
+val binomialDist = Binomial.scalar(n = 10, probs = 0.3f)
+val discreteUniformDist = DiscreteUniform.scalar(min = 0, max = 10)
+val exponentialDist = Exponential.scalar(rate = 2.0f)
+val poissonDist = Poisson.scalar(rate = 3.0f)
+```
+
+`scalar` is available on every distribution in `dimwit.stats`: `Normal`, `Cauchy`, `HalfCauchy`, `HalfNormal`, `Beta`, `Uniform`, `DiscreteUniform`, `StudentT`, `TruncatedNormal`, `Binomial`, `Bernoulli`, `Exponential`, and `Poisson`. Its value type defaults to the natural type for that distribution's parameters (`Float32` for continuous ones, `Int32` for count-like ones such as `Binomial.n` and `DiscreteUniform`'s bounds); use the tensor-based `apply` directly if you need a different value type.
 
 ### Random Key Splitting with vmap
 
@@ -1094,15 +1135,11 @@ val wrong = intTensor.exp  // exp requires IsFloating constraint
 // value exp is not a member of dimwit.tensor.Tensor1[MdocApp12.this.A, dimwit.tensor.DType.Int32].
 // An extension method was tried, but could not be fully constructed:
 // 
-//     dimwit.exp[Tuple1[MdocApp12.this.A],
-//       (dimwit.tensor.DType.Int32 : dimwit.tensor.DType)](this.intTensor)(
-//       dimwit.tensor.Labels.concat[MdocApp12.this.A, EmptyTuple.type](
-//         this.A.derived$Label, dimwit.tensor.Labels.namesOfEmpty),
+//     dimwit.exp[Tuple1[MdocApp12.this.A], dimwit.tensor.DType.Int32](this.intTensor)(
+//       dimwit.tensor.Labels.consTuple[MdocApp12.this.A, EmptyTuple.type](
+//         this.A.derived$Label, dimwit.tensor.Labels.emptyTuple),
 //       /* missing */
-//         summon[
-//           dimwit.tensor.TensorOps.IsFloating[
-//             (dimwit.tensor.DType.Int32 : dimwit.tensor.DType)]
-//         ]
+//         summon[dimwit.tensor.TensorOps.IsFloating[dimwit.tensor.DType.Int32]]
 //     )
 // 
 //     failed with:
@@ -1118,15 +1155,12 @@ val wrong = boolTensor.mean
 // value mean is not a member of dimwit.tensor.Tensor1[MdocApp12.this.A, dimwit.tensor.DType.Bool].
 // An extension method was tried, but could not be fully constructed:
 // 
-//     dimwit.mean[Tuple1[MdocApp12.this.A],
-//       (dimwit.tensor.DType.Bool : dimwit.tensor.DType)](this.boolTensor)(
-//       dimwit.tensor.Labels.concat[MdocApp12.this.A, EmptyTuple.type](
-//         this.A.derived$Label, dimwit.tensor.Labels.namesOfEmpty),
+//     dimwit.mean[Tuple1[MdocApp12.this.A], dimwit.tensor.DType.Bool](this.boolTensor)
+//       (
+//       dimwit.tensor.Labels.consTuple[MdocApp12.this.A, EmptyTuple.type](
+//         this.A.derived$Label, dimwit.tensor.Labels.emptyTuple),
 //       /* missing */
-//         summon[
-//           dimwit.tensor.TensorOps.IsFloating[
-//             (dimwit.tensor.DType.Bool : dimwit.tensor.DType)]
-//         ]
+//         summon[dimwit.tensor.TensorOps.IsFloating[dimwit.tensor.DType.Bool]]
 //     )
 // 
 //     failed with:
@@ -1146,8 +1180,7 @@ val wrong = t1 + t2  // Different labels AND different sizes
 // error: 
 // Found:    (MdocApp12.this.t2 :
 //   dimwit.tensor.Tensor1[MdocApp12.this.B, dimwit.tensor.DType.Float32])
-// Required: dimwit.tensor.Tensor[Tuple1[MdocApp12.this.A],
-//   (dimwit.tensor.DType.Float32 : dimwit.tensor.DType)]
+// Required: dimwit.tensor.Tensor[Tuple1[MdocApp12.this.A], dimwit.tensor.DType.Float32]
 ```
 
 ```scala
@@ -1161,9 +1194,9 @@ val wrong = m1.dot(Axis[B])(m2)  // Axis[B] not in m2
 // 
 //     dimwit.tensor.ShapeTypeHelpers.AxisRemover.bridge[
 //       (MdocApp12.this.C, MdocApp12.this.D), MdocApp12.this.B, R](
-//       dimwit.tensor.ShapeTypeHelpers.AxisIndex.tail[MdocApp12.this.C,
+//       dimwit.tensor.ShapeTypeHelpers.AxisIndex.search[MdocApp12.this.C,
 //         MdocApp12.this.D *: EmptyTuple.type, MdocApp12.this.B](
-//         dimwit.tensor.ShapeTypeHelpers.AxisIndex.tail[MdocApp12.this.D,
+//         dimwit.tensor.ShapeTypeHelpers.AxisIndex.search[MdocApp12.this.D,
 //           EmptyTuple.type, MdocApp12.this.B](
 //           dimwit.tensor.ShapeTypeHelpers.AxisIndex.concatRight[A, B², L])
 //       ),
@@ -1185,7 +1218,7 @@ val wrong = t + 10.0f  // Should use +! for scalar broadcast
 // error: 
 // Found:    (10.0f : Float)
 // Required: dimwit.tensor.Tensor[(MdocApp12.this.A, MdocApp12.this.B),
-//   (dimwit.tensor.DType.Float32 : dimwit.tensor.DType)]
+//   dimwit.tensor.DType.Float32]
 ```
 
 ```scala
@@ -1200,18 +1233,18 @@ val wrong = t1 +! t2
 // 
 //     dimwit.tensor.tensorops.TensorOpsUtil.Broadcast.broadcastLeft[
 //       Tuple1[MdocApp12.this.A], Tuple1[MdocApp12.this.A],
-//       (dimwit.tensor.DType.Float32 : dimwit.tensor.DType)](
-//       dimwit.tensor.Labels.concat[MdocApp12.this.A, EmptyTuple.type](
-//         this.A.derived$Label, dimwit.tensor.Labels.namesOfEmpty),
-//       dimwit.tensor.Labels.concat[MdocApp12.this.A, EmptyTuple.type](
-//         this.A.derived$Label, dimwit.tensor.Labels.namesOfEmpty),
-//       dimwit.tensor.TupleHelpers.StrictSubset.derive[Tuple1[MdocApp12.this.A],
+//       dimwit.tensor.DType.Float32](
+//       dimwit.tensor.Labels.consTuple[MdocApp12.this.A, EmptyTuple.type](
+//         this.A.derived$Label, dimwit.tensor.Labels.emptyTuple),
+//       dimwit.tensor.Labels.consTuple[MdocApp12.this.A, EmptyTuple.type](
+//         this.A.derived$Label, dimwit.tensor.Labels.emptyTuple),
+//       dimwit.tensor.TupleHelpers.StrictSubset.bridge[Tuple1[MdocApp12.this.A],
 //         Tuple1[MdocApp12.this.A]](
-//         dimwit.tensor.TupleHelpers.Subset.head[MdocApp12.this.A, EmptyTuple.type,
-//           Tuple1[MdocApp12.this.A]](
+//         dimwit.tensor.TupleHelpers.Subset.consTuple²[MdocApp12.this.A,
+//           EmptyTuple.type, Tuple1[MdocApp12.this.A]](
 //           dimwit.tensor.TupleHelpers.SetMember.found[MdocApp12.this.A,
 //             EmptyTuple.type],
-//           dimwit.tensor.TupleHelpers.Subset.empty[Tuple1[MdocApp12.this.A]]),
+//           dimwit.tensor.TupleHelpers.Subset.emptyTuple²[Tuple1[MdocApp12.this.A]]),
 //         /* missing */
 //           summon[
 //             scala.util.NotGiven[Tuple1[MdocApp12.this.A] =:=
@@ -1220,7 +1253,13 @@ val wrong = t1 +! t2
 //       )
 //     )
 // 
-// But no implicit values were found that match type scala.util.NotGiven[Tuple1[MdocApp12.this.A] =:= Tuple1[MdocApp12.this.A]].
+// But no implicit values were found that match type scala.util.NotGiven[Tuple1[MdocApp12.this.A] =:= Tuple1[MdocApp12.this.A]]
+// 
+// where:    consTuple   is a given instance in object Labels
+//           consTuple²  is a given instance in object Subset
+//           emptyTuple  is a given instance in object Labels
+//           emptyTuple² is a given instance in object Subset
+// .
 // val wrong = t1 +! t2
 //                   ^^
 ```
@@ -1237,9 +1276,9 @@ val wrong = t.sum(Axis[C])  // Axis[C] not in tensor
 // 
 //     dimwit.tensor.ShapeTypeHelpers.AxisRemover.bridge[
 //       (MdocApp12.this.A, MdocApp12.this.B), MdocApp12.this.C, R](
-//       dimwit.tensor.ShapeTypeHelpers.AxisIndex.tail[MdocApp12.this.A,
+//       dimwit.tensor.ShapeTypeHelpers.AxisIndex.search[MdocApp12.this.A,
 //         MdocApp12.this.B *: EmptyTuple.type, MdocApp12.this.C](
-//         dimwit.tensor.ShapeTypeHelpers.AxisIndex.tail[MdocApp12.this.B,
+//         dimwit.tensor.ShapeTypeHelpers.AxisIndex.search[MdocApp12.this.B,
 //           EmptyTuple.type, MdocApp12.this.C](
 //           dimwit.tensor.ShapeTypeHelpers.AxisIndex.concatRight[A², B², L])
 //       ),
@@ -1283,23 +1322,23 @@ val wrong = Autodiff.grad(nonScalar)  // Use jacobian instead
 //  [Input, V]
 //   (f: Input => dimwit.tensor.Tensor0[V])
 //     (using evidence$1: dimwit.tensor.TensorOps.IsFloating[V],
-//       inTree: dimwit.autodiff.TensorTree[Input], outTree:
-//       dimwit.autodiff.TensorTree[dimwit.tensor.Tensor0[V]]): Input =>
+//       inTree: dimwit.tensortree.TensorTree[Input], outTree:
+//       dimwit.tensortree.TensorTree[dimwit.tensor.Tensor0[V]]): Input =>
 //       dimwit.autodiff.Grad[Input]
 //  [T1, T2, T3, V²]
 //   (f: (T1, T2, T3) => dimwit.tensor.Tensor0[V²])
 //     (using evidence$1²: dimwit.tensor.TensorOps.IsFloating[V²],
-//       t1Tree: dimwit.autodiff.TensorTree[T1],
-//       t2Tree: dimwit.autodiff.TensorTree[T2],
-//       t3Tree: dimwit.autodiff.TensorTree[T3], outTree²:
-//       dimwit.autodiff.TensorTree[dimwit.tensor.Tensor0[V²]]): (T1, T2, T3) =>
+//       t1Tree: dimwit.tensortree.TensorTree[T1],
+//       t2Tree: dimwit.tensortree.TensorTree[T2],
+//       t3Tree: dimwit.tensortree.TensorTree[T3], outTree²:
+//       dimwit.tensortree.TensorTree[dimwit.tensor.Tensor0[V²]]): (T1, T2, T3) =>
 //       dimwit.autodiff.Grad[(T1, T2, T3)]
 //  [T1², T2², V³]
 //   (f: (T1², T2²) => dimwit.tensor.Tensor0[V³])
 //     (using evidence$1³: dimwit.tensor.TensorOps.IsFloating[V³],
-//       t1Tree²: dimwit.autodiff.TensorTree[T1²],
-//       t2Tree²: dimwit.autodiff.TensorTree[T2²], outTree³:
-//       dimwit.autodiff.TensorTree[dimwit.tensor.Tensor0[V³]]): (T1², T2²) =>
+//       t1Tree²: dimwit.tensortree.TensorTree[T1²],
+//       t2Tree²: dimwit.tensortree.TensorTree[T2²], outTree³:
+//       dimwit.tensortree.TensorTree[dimwit.tensor.Tensor0[V³]]): (T1², T2²) =>
 //       dimwit.autodiff.Grad[(T1², T2²)]
 // match arguments (dimwit.tensor.Tensor1[MdocApp12.this.A, dimwit.Float32] =>
 //   dimwit.tensor.Tensor1[MdocApp12.this.A, dimwit.Float32])
@@ -1405,8 +1444,8 @@ import dimwit.stats.{Normal, Uniform}
 trait A derives Label
 
 val rootKey = Random.Key(42)
-val normalDist = Normal(loc = Tensor0(0.0f), scale = Tensor0(1.0f))
-val uniformDist = Uniform(low = Tensor0(0.0f), high = Tensor0(1.0f))
+val normalDist = Normal.scalar(loc = 0.0f, scale = 1.0f)
+val uniformDist = Uniform.scalar(low = 0.0f, high = 1.0f)
 
 // GOOD: Explicit key threading
 val (key1, key2) = rootKey.split2()

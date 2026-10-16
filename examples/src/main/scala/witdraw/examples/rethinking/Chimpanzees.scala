@@ -19,7 +19,6 @@ import plotwit.{display, grid}
 
 import java.io.File
 import plotwit.plots.histogramPlot
-import dimwit.nn.ActivationFunctions
 import witdraw.~
 
 object Chimpanzees:
@@ -108,7 +107,7 @@ object Chimpanzees:
       val partnerModulation = partnerEffect *! hasPartner.asFloat32
       // Log-odds → probability of pulling left
       val probPullLeft = Prob(
-        ActivationFunctions.sigmoid(
+        Tensor.sigmoid(
           populationIntercept +! chimpBaselinePerTrial +
             ((prosocialEffect +! partnerModulation) * prosocialOnLeft.asFloat32)
         )
