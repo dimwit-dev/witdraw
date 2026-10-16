@@ -35,68 +35,79 @@ tensor dimensions part of Scala 3 types. On top of it:
 The resulting log-densities are differentiable JAX code, ready for NUTS, MAP
 estimation or quadratic approximation.
 
+New to WitDraw? The [quickstart](docs/quickstart.md) walks through a complete
+Bayesian linear regression, from writing the model to checking the posterior.
+
 
 ## Example
 
-A linear regression. Each random variable is declared as a site, together
-with its shape:
+A Bayesian linear regression, the running example of the
+[quickstart](docs/quickstart.md). Each random variable is declared as a
+site, together with its shape:
 
 ```scala
 import dimwit.*
 import dimwit.stats.*
 import witdraw.*
 
-trait Data derives Label       // one entry per observation
-trait Predictor derives Label  // one entry per regression coefficient
+trait Sample derives Label   // one entry per observation
+trait Feature derives Label  // one entry per feature, i.e. per regression weight
 
-object Alpha extends Site[Tensor0[Float32]]             // intercept
-object Beta  extends Site[Tensor1[Predictor, Float32]]  // coefficients
-object Sigma extends Site[Tensor0[Float32]]             // noise scale
-object Y     extends Site[Tensor1[Data, Float32]]       // outcome
+object Alpha extends Site[Tensor0[Float32]]           // intercept
+object Beta  extends Site[Tensor1[Feature, Float32]]  // regression weights
+object Sigma extends Site[Tensor0[Float32]]           // noise scale (> 0)
+object Y     extends Site[Tensor1[Sample, Float32]]   // outcomes
 ```
 
-The model tells the generative story, and nothing else. The covariates `x`
-are an input. The outcome `Y` is a random variable like any other:
+The model tells the generative story, and nothing else. The feature matrix
+`x` is an input. The outcomes `Y` are a random variable like any other:
 
 ```scala
-def model(x: Tensor2[Data, Predictor, Float32]) = ProbProg:
-  val alpha = Alpha ~ Normal(0f, 100f)
-  val beta  = Beta ~ Normal.isotropic(Tensor1(x.extent(Axis[Predictor])).fill(0f), 100f)
-  val sigma = Sigma ~ HalfCauchy(0f, 25f)
-  val mu = x.dot(Axis[Predictor])(beta) +! alpha   // +! broadcasts the scalar alpha
-  Y ~ Normal.isotropic(mu, sigma)
+def model(x: Tensor2[Sample, Feature, Float32]) = ProbProg:
+  val alpha = Alpha ~ Normal(0f, 10f)
+  val beta  = Beta ~ Normal.isotropic(Tensor1(x.extent(Axis[Feature])).fill(0f), 10f)
+  val sigma = Sigma ~ HalfCauchy(0f, 5f)
+  val mu = x.dot(Axis[Feature])(beta) +! alpha   // +! broadcasts the scalar alpha
+  val y = Y ~ Normal.isotropic(mu, sigma)
+  (alpha = alpha, beta = beta, sigma = sigma, y = y)
 ```
 
 **Variables declare their assumptions.** If the likelihood doesn't match what
-`Y` declares, for example because the covariates were forgotten, the model
+`Y` declares, for example because the features were forgotten, the model
 does not compile:
 
 ```scala
 Y ~ Normal.isotropic(beta, sigma)
-// error: Found:    Tensor[Tuple1[Predictor], Float32]
-//        Required: Tensor[Tuple1[Data], Float32]
+// error: Found:    Tensor[Tuple1[Feature], Float32]
+//        Required: Tensor[Tuple1[Sample], Float32]
 ```
 
-**The model is written once.** Given covariates `x` and observed outcomes
-`y`, the same definition draws from the prior predictive and gives the
+**The model is written once.** Given features `xData` and observed outcomes
+`yData`, the same definition draws from the prior predictive and gives the
 log-density for inference:
 
 ```scala
-val ySim: Tensor1[Data, Float32] = ForwardSampler.run(Key(0))(model(x))
+val modelOnX = model(xData)
 
-type Posterior = (alpha: Tensor0[Float32], beta: Tensor1[Predictor, Float32], sigma: Tensor0[Float32])
+val priorDraw = ForwardSampler.run(Key(0))(modelOnX)   // a named tuple of all variables
+val ySim: Tensor1[Sample, Float32] = priorDraw.y
 
-def logDensity(p: Posterior): Tensor0[Float32] =
-  ModelScorer.run(
-    model(x).observe(Y := y, Alpha := p.alpha, Beta := p.beta, Sigma := p.sigma)
-  )
+type PosteriorParams = (alpha: Alpha.Value, beta: Beta.Value, sigma: Sigma.Value)
+
+def logDensity(params: PosteriorParams): Tensor0[Float32] =
+  ModelScorer.run(modelOnX.observe(Y := yData).observeAll(params))
 ```
 
 **Data is attached, not built in.** Observations enter only through
-`observe`, and each `:=` is checked against the type of its site. The model
-above never mentions `y`, so whether `Y` is observed is decided where the
-model is used. `logDensity` can be handed directly to a sampler, for example
-`NUTSAlgorithm[Posterior](stepSize = 0.1)(logDensity)`.
+`observe`, and each `:=` is checked against the type of its site.
+`observeAll` conditions every site named by a field of `params` (`sigma`
+conditions `Sigma`). The model never mentions `yData`, so whether `Y` is
+observed is decided where the model is used.
+
+`logDensity` is ready for gradient-based inference. The
+[quickstart](docs/quickstart.md) continues from here: it simulates data,
+keeps `sigma` positive by sampling it on the log scale, runs NUTS and checks
+the posterior against the true parameters.
 
 More examples, including ports of models from
 [Statistical Rethinking](https://xcelab.net/rm/) and the Stan user guide, are

@@ -82,7 +82,7 @@ lazy val examples = (project in file("examples"))
 
 lazy val docs =
   (project in file(".witdraw-docs")) // Hidden folder for sbt metadata
-    .dependsOn(root)
+    .dependsOn(core)
     .enablePlugins(MdocPlugin)
     .settings(
       name := "witdraw-docs",
