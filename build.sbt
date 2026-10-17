@@ -56,7 +56,8 @@ lazy val core = (project in file("core"))
     name := "witdraw-core",
     description := "Typed probabilistic programming for Scala 3, built on DimWit",
     libraryDependencies ++= Seq(
-      "ch.contrafactus" %% "dimwit-core" % "0.2.0"
+      "ch.contrafactus" %% "dimwit-core" % "0.2.0",
+      "org.scalameta" %% "munit" % "1.0.0" % Test
     ),
     Compile / packageSrc / publishArtifact := true,
     Compile / packageDoc / publishArtifact := true,

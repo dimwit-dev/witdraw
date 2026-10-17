@@ -6,7 +6,6 @@ import java.io.File
 import dimwit.stats.HalfCauchy
 import dimwit.stats.Distribution
 import witdraw.Site
-import witdraw.RandomVar
 import dimwit.stats.Normal
 import dimwit.stats.MVNormal
 import dimwit.stats.Bernoulli
@@ -15,11 +14,12 @@ import plotwit.PlotTargets.websocket
 import plotwit.{display, grid}
 import witdraw.distributions.LKJ
 import witdraw.ModelScorer
+import witdraw.ProbProg
+import witdraw.observe
 import witdraw.mcmc.NUTSAlgorithm
 import dimwit.jax.Jax
 import witling.updated
 import witling.Col
-import witdraw.~
 
 class IndependentMultivariateDist[LBatch: Label, L: Label](
     extent: AxisExtent[LBatch],
@@ -102,8 +102,7 @@ object AdmissionEx:
         betaDept: BetaDept.Value
     )
 
-    val model = witdraw.ProbProg[Result]:
-
+    val model: ProbProg[Result] =
       val alpha = Alpha ~ Normal(0f, 10f)
       val beta = Beta ~ Normal(0f, 1f)
 
@@ -139,7 +138,7 @@ object AdmissionEx:
           alpha +! alphaPerCase + betaPerCase * male.asType(VType[Float32])
         )
       )
-      val admission = RandomVar(Admission, Bernoulli(admissionProb))
+      val admission = Admission ~ Bernoulli(admissionProb)
       Result(alphaDeptValues, betaDeptValues)
 
     trait Sample derives Label
@@ -161,17 +160,16 @@ object AdmissionEx:
     ) derives TensorTree
 
     def logDensity(admission: Admission.Value)(params: Posterior) =
-      val observedModel = model.observe(
-        Alpha := params.alpha,
-        Beta := params.beta,
-        R := params.r,
-        DeptAB := params.deptAB,
-        AlphaDept := params.alphaDept,
-        BetaDept := params.betaDept,
-        Admission := admission
-      )
-
-      ModelScorer.run(observedModel)
+      // alphaDept and betaDept are slices of deptAB, not sites of the model,
+      // so they are not observed.
+      ModelScorer.run:
+        observe(
+          Alpha := params.alpha,
+          Beta := params.beta,
+          R := params.r,
+          DeptAB := params.deptAB,
+          Admission := admission
+        )(model)
 
     val initialParams = Posterior(
       alpha = Tensor0(0f),

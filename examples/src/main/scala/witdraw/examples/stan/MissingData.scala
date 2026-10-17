@@ -80,7 +80,7 @@ object MissingData:
   /** @param nObs number of rows with the predictor observed
     * @param nMissing number of rows with the predictor missing
     */
-  def model(nObs: Int, nMissing: Int) = ProbProg:
+  def model(nObs: Int, nMissing: Int)(using ProbContext) =
     val alpha = Alpha ~ Normal(Tensor0(0f), Tensor0(10f))
     val beta = Beta ~ Normal(Tensor0(0f), Tensor0(10f))
     val sigma = Sigma ~ HalfCauchy(Tensor0(0f), Tensor0(5f))
@@ -120,17 +120,16 @@ object MissingData:
       xObs: Tensor1[Data, Float32],
       y: Tensor1[Data, Float32],
       nMissing: Int
-  ): ProbProg[?] =
-    model(xObs.shape(Axis[Data]), nMissing)
-      .observe(XObs := xObs)
-      .observe(Y := y)
+  )(using ProbContext) =
+    observe(XObs := xObs, Y := y):
+      model(xObs.shape(Axis[Data]), nMissing)
 
   def logDensity(
       xObs: Tensor1[Data, Float32],
       y: Tensor1[Data, Float32],
       nMissing: Int
   )(params: Posterior): Tensor0[Float32] =
-    ModelScorer.run(observed(xObs, y, nMissing).observeAll(params))
+    ModelScorer.run(observeAll(params)(observed(xObs, y, nMissing)))
 
   // -- runnable example -------------------------------------------------
 

@@ -8,10 +8,10 @@ import dimwit.stats.Uniform
 import viz.PlotTargets.websocket
 import viz.macros.BoolField
 import witdraw.ModelScorer
-import witdraw.ProbProg
-import witdraw.RandomVar
+import witdraw.ProbContext
 import witdraw.Site
-import witdraw.given
+import witdraw.observe
+import witdraw.observeAll
 import witling.DataFrame
 import witdraw.mcmc.NUTSAlgorithm
 import plotwit.PlotTargets.websocket
@@ -19,7 +19,6 @@ import plotwit.{display, grid}
 
 import java.io.File
 import plotwit.plots.histogramPlot
-import witdraw.~
 
 object Chimpanzees:
 
@@ -77,8 +76,7 @@ object Chimpanzees:
     // Between-chimp standard deviation (controls partial pooling strength)
     object ChimpVariability extends Site[Tensor0[Float32]]
 
-    val model = ProbProg:
-
+    def model(using ProbContext) =
       // How much extra pull-left tendency when a partner is present
       val partnerEffect = PartnerEffect ~ Normal(Tensor0(0f), Tensor0(10f))
 
@@ -130,10 +128,10 @@ object Chimpanzees:
         chimpVariability: Tensor0[Float32]
     )
 
-    val conditioned = model.observe(PulledLeft := pulledLeft)
-
     def logDensity(posteriorParams: Posterior) =
-      ModelScorer.run(conditioned.observeAll(posteriorParams))
+      ModelScorer.run:
+        observe(PulledLeft := pulledLeft):
+          observeAll(posteriorParams)(model)
 
     val burnIn = 2000
     val nSamples = 5000

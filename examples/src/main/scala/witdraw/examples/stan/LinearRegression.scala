@@ -15,7 +15,7 @@ object LinearRegression:
   object Sigma extends Site[Tensor0[Float32]] // error scale (> 0)
   object Y extends Site[Tensor1[Data, Float32]] // outcome vector
 
-  def model(x: Tensor2[Data, Predictor, Float32]) = ProbProg:
+  def model(x: Tensor2[Data, Predictor, Float32])(using ProbContext) =
     val nPredictors = x.shape(Axis[Predictor])
 
     val alpha = Alpha ~ Normal(Tensor0(0f), Tensor0(100f))
@@ -43,4 +43,7 @@ object LinearRegression:
       x: Tensor2[Data, Predictor, Float32],
       y: Tensor1[Data, Float32]
   )(params: Posterior): Tensor0[Float32] =
-    ModelScorer.run(model(x).observe(Y := y).observeAll(params))
+    ModelScorer.run:
+      observe(Y := y):
+        observeAll(params):
+          model(x)

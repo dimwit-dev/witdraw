@@ -28,8 +28,11 @@ this over to probabilistic programs:
   Prior sampling, predictive checks and scoring for inference all run the same
   code, so there is no second version that can drift from the one a reader
   reviewed.
-- `model.observe(Y := data)` conditions a model without changing its code, so
-  it is always explicit which variables are observed.
+- `observe(Y := data)(model)` conditions a model without changing its code,
+  so it is always explicit which variables are observed.
+- Models need a `ProbContext` capability to run, in the style of Scala 3's
+  direct-style capabilities. Sub-models are ordinary method calls, and
+  handlers such as `observe` are ordinary functions that wrap a block.
 
 New to WitDraw? The [quickstart](docs/quickstart.md) walks through a complete
 Bayesian linear regression, from writing the model to checking the posterior.
@@ -57,7 +60,7 @@ The model tells the generative story, and nothing else. The feature matrix
 `x` is an input. The outcomes `Y` are a random variable like any other:
 
 ```scala
-def model(x: Tensor2[Sample, Feature, Float32]) = ProbProg:
+def model(x: Tensor2[Sample, Feature, Float32])(using ProbContext) =
   val alpha = Alpha ~ Normal(0f, 10f)
   val beta  = Beta ~ Normal.isotropic(Tensor1(x.extent(Axis[Feature])).fill(0f), 10f)
   val sigma = Sigma ~ HalfCauchy(0f, 5f)
@@ -82,13 +85,13 @@ variable is observed is decided where the model is used, not where it is
 defined.
 
 ```scala
-val modelOnX = model(xData)
-
 // draw every variable from the prior: a named tuple (alpha, beta, sigma, y)
-val prior = ForwardSampler.run(Key(0))(modelOnX)
+val prior = ForwardSampler.run(Key(0))(model(xData))
 
 // draw with the noise scale fixed to 1
-val withKnownSigma = ForwardSampler.run(Key(1))(modelOnX.observe(Sigma := Tensor0(1f)))
+val withKnownSigma = ForwardSampler.run(Key(1)):
+  observe(Sigma := Tensor0(1f)):
+    model(xData)
 
 // log p(y, alpha, beta, sigma): the unnormalised log posterior of the parameters
 def logDensity(
@@ -96,9 +99,9 @@ def logDensity(
     beta: Tensor1[Feature, Float32],
     sigma: Tensor0[Float32]
 ): Tensor0[Float32] =
-  ModelScorer.run(
-    modelOnX.observe(Y := yData, Alpha := alpha, Beta := beta, Sigma := sigma)
-  )
+  ModelScorer.run:
+    observe(Y := yData, Alpha := alpha, Beta := beta, Sigma := sigma):
+      model(xData)
 ```
 
 `logDensity` is what gradient-based samplers such as NUTS work with. The

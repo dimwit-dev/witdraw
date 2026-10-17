@@ -31,7 +31,7 @@ import witdraw.*
   * The per-point marginalisation `log_sum_exp_k (log theta_k + N(y_n | mu_k,
   * sigma_k))` is packaged as [[MixtureLikelihood]], a single distribution over
   * the length-`N` observation vector, so `y` enters only via
-  * `.observe(Y := y)`. Its `logProb` is the summed log-sum-exp; its `sample`
+  * `observe(Y := y)`. Its `logProb` is the summed log-sum-exp; its `sample`
   * draws a component per point and emits from it.
   *
   * Stan has no explicit prior on `theta`, so it gets the implicit uniform
@@ -138,7 +138,7 @@ object Mixture:
   /** The model over `k` components and `n` observations. Forward-sampling
     * draws a fresh mixture sample; observing `Y` scores the marginal.
     */
-  def model(k: Int, n: Int) = ProbProg:
+  def model(k: Int, n: Int)(using ProbContext) =
     val p = samplePriors(k)
     val y = Y ~ MixtureLikelihood(p.theta, p.mu, p.sigma, n)
     (theta = p.theta, mu = p.mu, sigma = p.sigma, y = y)
@@ -146,15 +146,14 @@ object Mixture:
   /** The model conditioned on an observed sample (`k` = number of
     * components).
     */
-  def observed(y: Tensor1[Data, Float32], k: Int): ProbProg[?] =
-    model(k, y.shape(Axis[Data])).observe(Y := y)
+  def observed(y: Tensor1[Data, Float32], k: Int)(using ProbContext) =
+    observe(Y := y)(model(k, y.shape(Axis[Data])))
 
   def logDensity(y: Tensor1[Data, Float32])(
       params: Posterior
   ): Tensor0[Float32] =
-    ModelScorer.run(
-      observed(y, params.mu.shape(Axis[Comp])).observeAll(params)
-    )
+    ModelScorer.run:
+      observeAll(params)(observed(y, params.mu.shape(Axis[Comp])))
 
   /** Draw parameters from their priors and simulate `n` points from a
     * `k`-component mixture.

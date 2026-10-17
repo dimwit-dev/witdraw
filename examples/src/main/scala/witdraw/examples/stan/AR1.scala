@@ -45,27 +45,27 @@ object AR1:
         }
       stack(values, Axis[Time]) // length 1 + (n - 1) = n
 
-  private def samplePriors = ProbProg:
+  private def samplePriors(using ProbContext) =
     val alpha = Alpha ~ Normal(Tensor0(0f), Tensor0(100f))
     val beta = Beta ~ Normal(Tensor0(0f), Tensor0(100f))
     val sigma = Sigma ~ HalfCauchy(Tensor0(0f), Tensor0(25f))
     (alpha = alpha, beta = beta, sigma = sigma)
 
-  def model(n: Int, y0: Tensor0[Float32] = Tensor0(0f)) = ProbProg:
-    val ps = samplePriors.run
+  def model(n: Int, y0: Tensor0[Float32] = Tensor0(0f))(using ProbContext) =
+    val ps = samplePriors
     val y = Y ~ AR1Likelihood(ps.alpha, ps.beta, ps.sigma, n, y0)
     (alpha = ps.alpha, beta = ps.beta, sigma = ps.sigma, y = y)
 
   /** The model conditioned on an observed series — the idiomatic entry point
     * for inference.
     */
-  def observed(y: Tensor1[Time, Float32]): ProbProg[?] =
-    model(y.shape(Axis[Time])).observe(Y := y)
+  def observed(y: Tensor1[Time, Float32])(using ProbContext) =
+    observe(Y := y)(model(y.shape(Axis[Time])))
 
   def logDensity(y: Tensor1[Time, Float32])(
       params: Posterior
   ): Tensor0[Float32] =
-    ModelScorer.run(observed(y).observeAll(params))
+    ModelScorer.run(observeAll(params)(observed(y)))
 
   // -- Generative helpers -------------------------------------------------
 

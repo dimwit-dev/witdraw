@@ -38,7 +38,7 @@ import witdraw.*
   * over the length-`N` observation sequence. Its `logProb` is the forward
   * recursion in log space; its `sample` is the generative HMM (draw a state
   * from `rho`, emit, transition, repeat). So `y` enters the model only
-  * through `.observe(Y := y)`.
+  * through `observe(Y := y)`.
   *
   * `gamma_arr` / `gamma`: row-stochastic transition matrix,
   * `gamma[i, j] = P(state n+1 = j | state n = i)`. `rho`: distribution of the
@@ -170,7 +170,7 @@ object HMM:
   /** The model over a length-`n` sequence. Forward-sampling it draws a fresh
     * HMM path; observing `Y` scores `hmm_marginal`.
     */
-  def model(n: Int) = ProbProg:
+  def model(n: Int)(using ProbContext) =
     val p = samplePriors
     val y = Y ~ HMMMarginal(p.mu, p.sigma, p.rho, p.gamma, n)
     (mu = p.mu, sigma = p.sigma, rho = p.rho, gamma = p.gamma, y = y)
@@ -178,13 +178,13 @@ object HMM:
   /** The model conditioned on an observed sequence — the entry point for
     * inference.
     */
-  def observed(y: Tensor1[Time, Float32]): ProbProg[?] =
-    model(y.shape(Axis[Time])).observe(Y := y)
+  def observed(y: Tensor1[Time, Float32])(using ProbContext) =
+    observe(Y := y)(model(y.shape(Axis[Time])))
 
   def logDensity(y: Tensor1[Time, Float32])(
       params: Posterior
   ): Tensor0[Float32] =
-    ModelScorer.run(observed(y).observeAll(params))
+    ModelScorer.run(observeAll(params)(observed(y)))
 
   /** Draw parameters from their priors and simulate a length-`n` sequence. */
   def generate(n: Int)(

@@ -22,45 +22,44 @@ object OceanicExample:
   def model(
       population: Tensor1[Society, Float32],
       distances: Tensor2[Society, Prime[Society], Float32]
-  ) =
+  )(using ProbContext) =
     val numSocieties = 10
-    ProbProg:
-      val globalIntercept =
-        GlobalIntercept ~ Normal(Tensor0(0.0f), Tensor0(10.0f))
+    val globalIntercept =
+      GlobalIntercept ~ Normal(Tensor0(0.0f), Tensor0(10.0f))
 
-      val eta2: Tensor0[Float32] =
-        Eta2 ~ HalfCauchy(Tensor0(0.0f), Tensor0(1.0f))
+    val eta2: Tensor0[Float32] =
+      Eta2 ~ HalfCauchy(Tensor0(0.0f), Tensor0(1.0f))
 
-      val rho2: Tensor0[Float32] =
-        Rho2 ~ HalfCauchy(Tensor0(0.0f), Tensor0(1.0f))
+    val rho2: Tensor0[Float32] =
+      Rho2 ~ HalfCauchy(Tensor0(0.0f), Tensor0(1.0f))
 
-      val squaredists = distances * distances
-      val K: Tensor2[Society, Prime[Society], Float32] =
-        eta2 *! (-rho2 *! squaredists).exp + Tensor2(
-          Axis[Society] -> numSocieties
-        ).eye *! Tensor0(0.01f)
+    val squaredists = distances * distances
+    val K: Tensor2[Society, Prime[Society], Float32] =
+      eta2 *! (-rho2 *! squaredists).exp + Tensor2(
+        Axis[Society] -> numSocieties
+      ).eye *! Tensor0(0.01f)
 
-      val societyIntercept = SocietyIntercept ~ MVNormal(
-        mean = Tensor1(Axis[Society] -> numSocieties).fill(0f),
-        covariance = K
-      )
+    val societyIntercept = SocietyIntercept ~ MVNormal(
+      mean = Tensor1(Axis[Society] -> numSocieties).fill(0f),
+      covariance = K
+    )
 
-      val societySlope = SocietySlope ~ Normal(Tensor0(0f), Tensor0(1f))
+    val societySlope = SocietySlope ~ Normal(Tensor0(0f), Tensor0(1f))
 
-      val logToolRate =
-        globalIntercept +! societyIntercept + societySlope *! population.log
-      val toolRate = logToolRate.exp
+    val logToolRate =
+      globalIntercept +! societyIntercept + societySlope *! population.log
+    val toolRate = logToolRate.exp
 
-      val numTools = NumTools ~ Poisson(toolRate)
+    val numTools = NumTools ~ Poisson(toolRate)
 
-      (
-        globalIntercept = globalIntercept,
-        societyIntercept = societyIntercept,
-        societySlope = societySlope,
-        eta2 = eta2,
-        rho2 = rho2,
-        numTools = numTools
-      )
+    (
+      globalIntercept = globalIntercept,
+      societyIntercept = societyIntercept,
+      societySlope = societySlope,
+      eta2 = eta2,
+      rho2 = rho2,
+      numTools = numTools
+    )
 
   @main
   def runOceanicExample(): Unit =
@@ -108,16 +107,10 @@ object OceanicExample:
           typed.cols.Hawaii.toArray
       )
 
-    val m = model(
-      population = Tensor1(Axis[Society] -> 10)
-        .fromArray(klineTyped.cols.population.toArray.map(_.toFloat)),
-      distances = distances
-    )
-
-    val mObs = m.observe(
-      NumTools := Tensor1(Axis[Society]).fromArray(
-        klineTyped.cols.total_tools.toArray.map(_.toInt)
-      )
+    val population = Tensor1(Axis[Society] -> 10)
+      .fromArray(klineTyped.cols.population.toArray.map(_.toFloat))
+    val numTools = Tensor1(Axis[Society]).fromArray(
+      klineTyped.cols.total_tools.toArray.map(_.toInt)
     )
 
     type PosteriorParams = (
@@ -129,7 +122,9 @@ object OceanicExample:
     )
 
     val logDensity = (params: PosteriorParams) =>
-      ModelScorer.run(mObs.observeAll(params))
+      ModelScorer.run:
+        observe(NumTools := numTools):
+          observeAll(params)(model(population, distances))
 
     val initialParams = (
       globalIntercept = Tensor0(0f),

@@ -1,63 +1,60 @@
 package witdraw
 
 import dimwit.*
+import dimwit.stats.Distribution
 import dimwit.tensor.{Labels, Tensor}
 
-// Match types: reduce to concrete shape/element at compile time for a known Tensor type
-private type ShapeOf[Ten <: Tensor[?, ?]] <: Tuple = Ten match
+/** The axis labels of a tensor type: `ShapeOf[Tensor1[L, V]] = Tuple1[L]`. */
+type ShapeOf[Ten <: Tensor[?, ?]] <: Tuple = Ten match
   case Tensor[t, v] => t
 
-private type ElemOf[Ten <: Tensor[?, ?]] = Ten match
+/** The element type of a tensor type: `ElemOf[Tensor1[L, V]] = V`. */
+type ElemOf[Ten <: Tensor[?, ?]] = Ten match
   case Tensor[t, v] => v
 
-/** Input to a `sample` call: either a free Site or an observed (fixed) site. */
-sealed trait SiteVariable[Ten <: Tensor[?, ?]]:
-  def name: String
-  def site: Site[?]
-  given labels: Labels[ShapeOf[Ten]]
+/** A distribution whose values have the tensor type `Ten`. */
+type DistributionOf[Ten <: Tensor[?, ?]] =
+  Distribution[ShapeOf[Ten], ElemOf[Ten]]
 
-/** A typed, named descriptor for a model variable.
+/** A named random variable of a model, whose values have the tensor type `Ten`.
   *
-  * Declare as `object Alpha extends Site[Tensor1[Feature, Float]]`. Pass to
-  * `sample` as a free variable, or fix a value with `site := value`.
+  * Declare a site as an object; its name is the object's name:
+  * {{{
+  * object Beta extends Site[Tensor1[Feature, Float32]]
+  * }}}
+  *
+  * Inside a model, `Beta ~ dist` says that the site is distributed according to
+  * `dist`. Outside, `Beta := value` creates an [[Observation]] for [[observe]].
+  *
+  * Sites are compared by identity: two different objects are two different
+  * sites, even if they have the same name. The name is used in error messages
+  * and by [[observeAll]], which matches field names to site names.
   */
-trait Site[Ten <: Tensor[?, ?]](using _lbl: Labels[ShapeOf[Ten]])
-    extends SiteVariable[Ten]:
+trait Site[Ten <: Tensor[?, ?]](using Labels[ShapeOf[Ten]]):
   def name: String = getClass.getSimpleName.stripSuffix("$")
-  def site: Site[?] = this
 
-  /** The tensor type of this site. Use as `Alpha.Value` in case class fields.
-    */
+  /** The tensor type of this site, e.g. `Beta.Value` in a parameter record. */
   type Value = Ten
 
-  /** The model parameter type for this site (free or observed). Use as
-    * `Alpha.Variable` in model signatures.
+  /** This site is distributed according to `dist`. Returns the site's value:
+    * drawn from `dist`, or an observed value, depending on the handlers and the
+    * interpreter that run the model.
     */
-  type Variable = SiteVariable[Ten]
+  infix def ~(dist: DistributionOf[Ten])(using ctx: ProbContext): Ten =
+    ctx.sample(SampleStatement(this, dist, observed = None))
 
-  override given labels: Labels[ShapeOf[Ten]] = _lbl
+  /** An observation of this site, to pass to [[observe]]. */
+  def :=(value: Ten): Observation[Ten] = Observation(this, value)
 
-  /** Fix a value: `alpha := tensor` produces an [[ObservedVariable]]. */
-  def :=(value: Ten): ObservedVariable[Ten] =
-    ObservedVariable(this, value)(using _lbl)
+  override def toString: String = s"Site($name)"
 
 object Site:
+  /** A site with an explicit name, e.g. for sites created in a loop. */
   def apply[Ten <: Tensor[?, ?]](siteName: String)(using
       Labels[ShapeOf[Ten]]
   ): Site[Ten] =
     new Site[Ten]:
       override def name: String = siteName
 
-/** A site with a fixed observed value. Create via `site := value`. */
-case class ObservedVariable[Ten <: Tensor[?, ?]](
-    parentSite: Site[?],
-    value: Ten
-)(using val lbl: Labels[ShapeOf[Ten]])
-    extends SiteVariable[Ten]:
-  def name: String = parentSite.name
-  def site: Site[?] = parentSite
-  given labels: Labels[ShapeOf[Ten]] = lbl
-
-type SiteInput0[V] = SiteVariable[Tensor0[V]]
-type SiteInput1[L, V] = SiteVariable[Tensor1[L, V]]
-type SiteInput2[L1, L2, V] = SiteVariable[Tensor2[L1, L2, V]]
+/** A value for a site, created with `site := value`. */
+case class Observation[Ten <: Tensor[?, ?]](site: Site[Ten], value: Ten)

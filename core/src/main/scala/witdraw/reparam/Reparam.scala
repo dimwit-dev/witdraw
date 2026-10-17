@@ -16,7 +16,7 @@ import scala.deriving.Mirror
   * every constraint is shape-preserving, and differs only in the fields whose
   * bijector changes shape (e.g. a stick-breaking simplex: `k-1` vs `k`).
   *
-  * `ProbProg` / `~` / `ModelScorer` are untouched: `Reparam` is a pure
+  * Models, handlers and interpreters are untouched: `Reparam` is a pure
   * adapter between the sampler and `logDensity`.
   *
   * @example

@@ -16,7 +16,7 @@ object WaterLandExample:
   object WaterProp extends Site[Tensor0[Float32]]
   object WaterCount extends Site[Tensor0[Int32]]
 
-  def model(numTosses: Int) = ProbProg:
+  def model(numTosses: Int)(using ProbContext) =
     val wp = WaterProp ~ Uniform(0f, 1f)
     val wc = WaterCount ~ Binomial(numTosses, Prob(wp))
     (waterProp = wp, waterCount = wc)
@@ -39,17 +39,15 @@ object WaterLandExample:
       Key(42)
         .split(10000)
         .map: key =>
-          ForwardSampler
-            .run(key)(
-              model(numTosses).observe(WaterProp := Prob(0.7f))
-            )
+          ForwardSampler.run(key):
+            observe(WaterProp := Prob(0.7f))(model(numTosses))
 
     type PosteriorParams = (waterProp: Tensor0[Float32])
 
-    val conditioned = model(numTosses).observe(WaterCount := waterCountData)
-
     val logDensity = (params: PosteriorParams) =>
-      ModelScorer.run(conditioned.observeAll(params))
+      ModelScorer.run:
+        observe(WaterCount := waterCountData):
+          observeAll(params)(model(numTosses))
 
     val burnIn = 500
     val nSamples = 2000
