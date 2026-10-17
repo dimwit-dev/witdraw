@@ -1,49 +1,43 @@
 # WitDraw - Probabilistic programming with wit
 
-
 ## Vision
 
-Probabilistic programs that are easy to read, reason about and trust, even when 
-the model becomes complex. The model itself should read like the statistical story it
-tells, with every assumption visible in the code. 
+Probabilistic programs that are easy to read, reason about and trust, even when
+the model becomes complex. The model itself should read like the statistical
+story it tells, with every assumption visible in the code.
 
 ## Why
 
 A probabilistic model is a set of assumptions about how the data came to be.
 Its conclusions are only as good as those assumptions, so someone has to
-understand them and vouch for them. More and more often, that someone did not
-write the model but an ai-agent or colleague did. It is thus important that all the
-assumptions are in the code and that a compiler helps to check them. 
+understand them and vouch for them. More and more often, they did not write
+the model themselves; an AI agent or a colleague did. It is thus important that
+all the assumptions are in the code and that a compiler helps to check them.
 
 ## How
 
 WitDraw builds on [DimWit](https://github.com/dimwit-dev/dimwit), which makes
-tensor dimensions part of Scala 3 types. On top of it:
+tensor dimensions part of Scala 3 types: you name what each dimension means,
+and the compiler checks that the names are used consistently. WitDraw carries
+this over to probabilistic programs:
 
-- **Variables declare their assumptions.** Every random variable is a
-  `Site[T]`, whose type states its shape, named dimensions and data type. The
-  compiler rejects a model that uses a variable inconsistently with what it
-  declares.
-- **The model is written once.** A model is a plain Scala function that only
-  tells the generative story. Prior sampling, predictive checks and scoring for
-  inference are all interpretations of that same code, so there is no second
-  version that can drift from the one a reader reviewed.
-- **Data is attached, not built in.** `model.observe(Y := data)` conditions a
-  model without changing its code, so it is always explicit which variables
-  are observed.
-
-The resulting log-densities are differentiable JAX code, ready for NUTS, MAP
-estimation or quadratic approximation.
+- Every random variable is a `Site[T]`, whose type states its shape, named
+  dimensions and data type. The compiler rejects a model that uses a variable
+  inconsistently with what it declares.
+- A model is a plain Scala function that only tells the generative story.
+  Prior sampling, predictive checks and scoring for inference all run the same
+  code, so there is no second version that can drift from the one a reader
+  reviewed.
+- `model.observe(Y := data)` conditions a model without changing its code, so
+  it is always explicit which variables are observed.
 
 New to WitDraw? The [quickstart](docs/quickstart.md) walks through a complete
 Bayesian linear regression, from writing the model to checking the posterior.
 
-
 ## Example
 
-A Bayesian linear regression, the running example of the
-[quickstart](docs/quickstart.md). Each random variable is declared as a
-site, together with its shape:
+A Bayesian linear regression. Each random variable is declared as a site,
+together with its shape:
 
 ```scala
 import dimwit.*
@@ -72,42 +66,45 @@ def model(x: Tensor2[Sample, Feature, Float32]) = ProbProg:
   (alpha = alpha, beta = beta, sigma = sigma, y = y)
 ```
 
-**Variables declare their assumptions.** If the likelihood doesn't match what
-`Y` declares, for example because the features were forgotten, the model
-does not compile:
+If the likelihood doesn't match what `Y` declares, for example because the
+features were forgotten, the model does not compile:
 
 ```scala
-Y ~ Normal.isotropic(beta, sigma)
-// error: Found:    Tensor[Tuple1[Feature], Float32]
+val y = Y ~ Normal.isotropic(beta, sigma)
+// error (simplified):
+//        Found:    Tensor[Tuple1[Feature], Float32]
 //        Required: Tensor[Tuple1[Sample], Float32]
 ```
 
-**The model is written once.** Given features `xData` and observed outcomes
-`yData`, the same definition draws from the prior predictive and gives the
-log-density for inference:
+The same model is used for sampling and for scoring. Observations enter through
+`observe`, and each `:=` is checked against the type of its site. Whether a
+variable is observed is decided where the model is used, not where it is
+defined.
 
 ```scala
 val modelOnX = model(xData)
 
-val priorDraw = ForwardSampler.run(Key(0))(modelOnX)   // a named tuple of all variables
-val ySim: Tensor1[Sample, Float32] = priorDraw.y
+// draw every variable from the prior: a named tuple (alpha, beta, sigma, y)
+val prior = ForwardSampler.run(Key(0))(modelOnX)
 
-type PosteriorParams = (alpha: Alpha.Value, beta: Beta.Value, sigma: Sigma.Value)
+// draw with the noise scale fixed to 1
+val withKnownSigma = ForwardSampler.run(Key(1))(modelOnX.observe(Sigma := Tensor0(1f)))
 
-def logDensity(params: PosteriorParams): Tensor0[Float32] =
-  ModelScorer.run(modelOnX.observe(Y := yData).observeAll(params))
+// log p(y, alpha, beta, sigma): the unnormalised log posterior of the parameters
+def logDensity(
+    alpha: Tensor0[Float32],
+    beta: Tensor1[Feature, Float32],
+    sigma: Tensor0[Float32]
+): Tensor0[Float32] =
+  ModelScorer.run(
+    modelOnX.observe(Y := yData, Alpha := alpha, Beta := beta, Sigma := sigma)
+  )
 ```
 
-**Data is attached, not built in.** Observations enter only through
-`observe`, and each `:=` is checked against the type of its site.
-`observeAll` conditions every site named by a field of `params` (`sigma`
-conditions `Sigma`). The model never mentions `yData`, so whether `Y` is
-observed is decided where the model is used.
-
-`logDensity` is ready for gradient-based inference. The
-[quickstart](docs/quickstart.md) continues from here: it simulates data,
-keeps `sigma` positive by sampling it on the log scale, runs NUTS and checks
-the posterior against the true parameters.
+`logDensity` is what gradient-based samplers such as NUTS work with. The
+[quickstart](docs/quickstart.md) is a complete, runnable version of this
+example: it simulates data, runs NUTS and checks the posterior against the
+true parameters.
 
 More examples, including ports of models from
 [Statistical Rethinking](https://xcelab.net/rm/) and the Stan user guide, are
