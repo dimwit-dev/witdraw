@@ -5,6 +5,7 @@ import dimwit.stats.*
 import witdraw.*
 import witdraw.mcmc.OptimizerKernel
 import witdraw.mcmc.NUTSAlgorithm
+import witdraw.reparam.Bijector
 
 /** Bayesian linear regression with **missing predictor values**, ported from
   * the recipe in the Stan User's Guide chapter on missing data:
@@ -68,15 +69,6 @@ object MissingData:
   object XMis extends Site[Tensor1[Missing, Float32]] // imputed predictor entries (latent)
   object Y extends Site[Tensor1[Data, Float32]]       // outcome, full length N
 
-  type Posterior = (
-      alpha: Tensor0[Float32],
-      beta: Tensor0[Float32],
-      sigma: Tensor0[Float32],
-      muX: Tensor0[Float32],
-      sigmaX: Tensor0[Float32],
-      xMis: Tensor1[Missing, Float32] // the imputed values are part of the posterior
-  )
-
   /** @param nObs number of rows with the predictor observed
     * @param nMissing number of rows with the predictor missing
     */
@@ -124,13 +116,6 @@ object MissingData:
     observe(XObs := xObs, Y := y):
       model(xObs.shape(Axis[Data]), nMissing)
 
-  def logDensity(
-      xObs: Tensor1[Data, Float32],
-      y: Tensor1[Data, Float32],
-      nMissing: Int
-  )(params: Posterior): Tensor0[Float32] =
-    ModelScorer.run(observeAll(params)(observed(xObs, y, nMissing)))
-
   // -- runnable example -------------------------------------------------
 
   @main
@@ -161,26 +146,25 @@ object MissingData:
     val xMisTrue = xAll.slice(Axis[Data].at(nObs until n)).relabelTo(Axis[Missing])
 
     // ---- inference --------------------------------------------------
-    val target = logDensity(xObs, yAll, nMissing)
+    // The latent sites (alpha, beta, sigma, muX, sigmaX and the imputed
+    // xMis) are found by tracing one run of the observed model. The two
+    // scales are sampled on the log scale, so they stay positive.
+    val latent = Latent.discover(
+      Key(3L),
+      Constraint(Sigma, Bijector.exp),
+      Constraint(SigmaX, Bijector.exp)
+    )(observed(xObs, yAll, nMissing))
+    println(s"latent sites: ${latent.sites.map(_.name).mkString(", ")}")
 
-    val xBar = xObs.mean.item
-    val init: Posterior = (
-      alpha = Tensor0(0f),
-      beta = Tensor0(0f),
-      sigma = Tensor0(1f),
-      muX = Tensor0(xBar),
-      sigmaX = Tensor0(1f),
-      xMis = Tensor1(Axis[Missing] -> nMissing).fill(xBar) // mean-impute as a start
-    )
-
-    // quick gradient ascent to a MAP-ish point, then NUTS from there
+    // quick gradient ascent from the traced draw to a MAP-ish point, then
+    // NUTS from there
     val ok = OptimizerKernel.toSamplingAlgorithm(
       optimizer = dimwit.optimizer.Adam(learningRate = -0.05f),
-      gradFn = (p: Posterior) => Autodiff.grad(target)(p)
+      gradFn = (p: latent.Params) => Autodiff.grad(latent.modelLogDensity)(p)
     )
-    val start = ok.run(init, Key(1L)).take(400).toList.last._1
+    val start = ok.run(latent.init, Key(1L)).take(400).toList.last._1
 
-    val nuts = NUTSAlgorithm[Posterior](stepSize = 0.02)(target)
+    val nuts = NUTSAlgorithm[latent.Params](stepSize = 0.02)(latent.logDensity)
     trait Sample derives Label
     val (samples, infos) = nuts
       .run(start, Key(2L))
@@ -193,18 +177,18 @@ object MissingData:
       f"NUTS divergences: ${infos.count(_.isDivergent)} / ${samples.length}"
     )
 
-    def postMean(f: Posterior => Tensor0[Float32]): Float =
-      stack(samples.map(f), Axis[Sample]).mean.item
+    def postMean(site: Site[Tensor0[Float32]]): Float =
+      stack(samples.map(_(site)), Axis[Sample]).mean.item
 
-    println(f"alpha : ${postMean(_.alpha)}%6.3f   (true $alphaTrue)")
-    println(f"beta  : ${postMean(_.beta)}%6.3f   (true $betaTrue)")
-    println(f"sigma : ${postMean(_.sigma)}%6.3f   (true $sigmaTrue)")
-    println(f"muX   : ${postMean(_.muX)}%6.3f   (true $muXTrue)")
-    println(f"sigmaX: ${postMean(_.sigmaX)}%6.3f   (true $sigmaXTrue)")
+    println(f"alpha : ${postMean(Alpha)}%6.3f   (true $alphaTrue)")
+    println(f"beta  : ${postMean(Beta)}%6.3f   (true $betaTrue)")
+    println(f"sigma : ${postMean(Sigma)}%6.3f   (true $sigmaTrue)")
+    println(f"muX   : ${postMean(MuX)}%6.3f   (true $muXTrue)")
+    println(f"sigmaX: ${postMean(SigmaX)}%6.3f   (true $sigmaXTrue)")
 
     // how well were the 20 hidden predictor values recovered?
     val xMisPost: Tensor1[Missing, Float32] =
-      stack(samples.map(_.xMis), Axis[Sample]).mean(Axis[Sample])
+      stack(samples.map(_(XMis)), Axis[Sample]).mean(Axis[Sample])
     val rmse = (xMisPost - xMisTrue).pow(Tensor0(2f)).mean.sqrt.item
     println(
       f"imputed x  RMSE vs truth: $rmse%.3f  " +

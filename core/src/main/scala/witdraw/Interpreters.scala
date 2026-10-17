@@ -80,7 +80,7 @@ object ModelScorer:
         ): Ten =
           val value = statement.observed.getOrElse:
             throw IllegalArgumentException(
-              s"Site '${statement.site.name}' is free, but ModelScorer needs every site to be observed (use observe or observeAll)."
+              s"Site '${statement.site.name}' is free, but ModelScorer needs every site to be observed (use observe, or Latent for the parameters)."
             )
           logProb = logProb + logProbOf(statement, value)
           value

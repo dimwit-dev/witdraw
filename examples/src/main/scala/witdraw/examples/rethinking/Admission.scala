@@ -13,7 +13,7 @@ import witdraw.ForwardSampler
 import plotwit.PlotTargets.websocket
 import plotwit.{display, grid}
 import witdraw.distributions.LKJ
-import witdraw.ModelScorer
+import witdraw.Latent
 import witdraw.ProbProg
 import witdraw.observe
 import witdraw.mcmc.NUTSAlgorithm
@@ -150,56 +150,32 @@ object AdmissionEx:
 
     // Plotting.display(Plotting.plotHistogram(pp, Some("Admission Probability")))
 
-    case class Posterior(
-        alpha: Alpha.Value,
-        beta: Beta.Value,
-        r: R.Value,
-        alphaDept: AlphaDept.Value,
-        betaDept: BetaDept.Value,
-        deptAB: DeptAB.Value
-    ) derives TensorTree
-
-    def logDensity(admission: Admission.Value)(params: Posterior) =
-      // alphaDept and betaDept are slices of deptAB, not sites of the model,
-      // so they are not observed.
-      ModelScorer.run:
-        observe(
-          Alpha := params.alpha,
-          Beta := params.beta,
-          R := params.r,
-          DeptAB := params.deptAB,
-          Admission := admission
-        )(model)
-
-    val initialParams = Posterior(
-      alpha = Tensor0(0f),
-      beta = Tensor0(0f),
-      r = Tensor2(Axis[AB] -> 2).eye,
-      alphaDept = Tensor1(Axis[Dept] -> nDepts).fill(0f),
-      betaDept = Tensor1(Axis[Dept] -> nDepts).fill(0f),
-      deptAB = Tensor2(Axis[Dept] -> nDepts, Axis[AB] -> 2).fill(1f)
-    )
-
     val admission = Tensor1(Axis[Case] -> dfCleaned.size).fromArray(
       dfCleaned.cols.Admit.toArray.map(x => if x == 1 then true else false)
     )
+
+    // The latent sites are Alpha, Beta, R and DeptAB; the per-department
+    // intercepts and slopes are slices of DeptAB. R is a correlation matrix,
+    // which would need a correlation (Cholesky) bijector; it is sampled
+    // unconstrained for now.
+    val posterior = Latent.discover(Key(1)):
+      observe(Admission := admission)(model)
+    println(s"latent sites: ${posterior.sites.map(_.name).mkString(", ")}")
     val burnIn = 200
     val nSamples = 200
     println("starting sampling")
     val nuts =
-      NUTSAlgorithm[Posterior](stepSize = 0.1)(jit(logDensity(admission)))
+      NUTSAlgorithm[posterior.Params](stepSize = 0.1)(jit(posterior.logDensity))
     val (nutsSamples, nutsInfos) = nuts
-      .run(
-        initialParams,
-        Key(42)
-      )
+      .run(posterior.init, Key(42))
       .drop(burnIn)
       .take(nSamples)
       .toList
       .unzip
     println(" done sampling")
-    val alphaDepts = stack(nutsSamples.map(_.alphaDept), Axis[Sample])
-    val betaDepts = stack(nutsSamples.map(_.betaDept), Axis[Sample])
+    val deptAB = stack(nutsSamples.map(_(DeptAB)), Axis[Sample])
+    val alphaDepts = deptAB.slice(Axis[AB].at(0))
+    val betaDepts = deptAB.slice(Axis[AB].at(1))
 
     println(f"mean alpha: ${alphaDepts.mean(Axis[Sample])}")
     println(f"mean beta ${betaDepts.mean(Axis[Sample])}")

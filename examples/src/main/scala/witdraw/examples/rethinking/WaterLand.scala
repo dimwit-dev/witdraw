@@ -6,6 +6,7 @@ import dimwit.stats.*
 import witdraw.*
 import witdraw.mcmc.OptimizerKernel
 import witdraw.mcmc.NUTSAlgorithm
+import witdraw.reparam.Bijector
 
 import plotwit.PlotTargets.websocket
 import plotwit.{display, grid}
@@ -42,31 +43,36 @@ object WaterLandExample:
           ForwardSampler.run(key):
             observe(WaterProp := Prob(0.7f))(model(numTosses))
 
-    type PosteriorParams = (waterProp: Tensor0[Float32])
+    def conditioned(using ProbContext) =
+      observe(WaterCount := waterCountData)(model(numTosses))
 
-    val logDensity = (params: PosteriorParams) =>
-      ModelScorer.run:
-        observe(WaterCount := waterCountData):
-          observeAll(params)(model(numTosses))
+    // The latent sites are found by tracing one run of the conditioned
+    // model. WaterProp is a proportion, so it is sampled on the logit scale.
+    val latent = Latent.discover(
+      Key(0),
+      Constraint(WaterProp, Bijector.interval(Tensor0(0f), Tensor0(1f)))
+    )(conditioned)
+    println(s"Latent sites: ${latent.sites.map(_.name).mkString(", ")}")
 
     val burnIn = 500
     val nSamples = 2000
 
     val ok = OptimizerKernel.toSamplingAlgorithm(
       optimizer = dimwit.optimizer.Adam(learningRate = -0.1f),
-      gradFn = (params: PosteriorParams) => Autodiff.grad(logDensity)(params)
+      gradFn =
+        (params: latent.Params) => Autodiff.grad(latent.modelLogDensity)(params)
     )
 
     val map = ok
-      .run((waterProp = Tensor0(0.5f)), Key(42))
+      .run(latent.initWith(WaterProp := Tensor0(0.5f)), Key(42))
       .take(100)
       .toList
       .last
       ._1
 
-    println(s"MAP estimate: ${map.waterProp}")
+    println(s"MAP estimate: ${map(WaterProp)}")
 
-    val nuts = NUTSAlgorithm[PosteriorParams](stepSize = 0.1)(logDensity)
+    val nuts = NUTSAlgorithm[latent.Params](stepSize = 0.1)(latent.logDensity)
     val (nutsSamples, nutsInfos) = nuts
       .run(map, Key(42))
       .drop(burnIn)
@@ -80,7 +86,7 @@ object WaterLandExample:
       f"NUTS mean acceptance rate: ${nutsInfos.map(_.acceptanceRate).sum / nSamples}%.3f"
     )
 
-    val posteriorSamples = stack(nutsSamples.map(_.waterProp), Axis[Sample])
+    val posteriorSamples = stack(nutsSamples.map(_(WaterProp)), Axis[Sample])
     display(
       histogramPlot(
         posteriorSamples,

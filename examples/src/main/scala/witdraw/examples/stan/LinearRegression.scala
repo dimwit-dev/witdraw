@@ -3,6 +3,7 @@ package witdraw.examples.stan
 import dimwit.*
 import dimwit.stats.*
 import witdraw.*
+import witdraw.reparam.Bijector
 
 object LinearRegression:
 
@@ -30,20 +31,14 @@ object LinearRegression:
 
     (alpha = alpha, beta = beta, sigma = sigma, y = y)
 
-  /** The free parameters, for conditioning the model on observed `x` / `y` and
-    * scoring the joint log-density (e.g. to hand to an MCMC kernel).
+  /** The latent sites of the model observed on `x` / `y`, with `sigma`
+    * positive. `latent.logDensity` is the joint log-density to hand to an MCMC
+    * kernel, and `latent.init` a starting point.
     */
-  type Posterior = (
-      alpha: Tensor0[Float32],
-      beta: Tensor1[Predictor, Float32],
-      sigma: Tensor0[Float32]
-  )
-
-  def logDensity(
+  def latent(
       x: Tensor2[Data, Predictor, Float32],
-      y: Tensor1[Data, Float32]
-  )(params: Posterior): Tensor0[Float32] =
-    ModelScorer.run:
-      observe(Y := y):
-        observeAll(params):
-          model(x)
+      y: Tensor1[Data, Float32],
+      key: Key
+  ): Latent =
+    Latent.discover(key, Constraint(Sigma, Bijector.exp)):
+      observe(Y := y)(model(x))

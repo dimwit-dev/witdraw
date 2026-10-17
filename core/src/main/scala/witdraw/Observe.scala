@@ -2,8 +2,6 @@ package witdraw
 
 import dimwit.*
 import scala.collection.mutable
-import scala.compiletime.constValueTuple
-import scala.deriving.Mirror
 
 /** Runs `model` with the given sites fixed to observed values.
   *
@@ -37,47 +35,8 @@ def observe[A](observations: Observation[?]*)(model: ProbProg[A])(using
   )
   result
 
-/** Runs `model` with every field of `values` (a named tuple or case class)
-  * observed. A field observes the site of the same name, compared with the
-  * first letter lower-cased: field `sigma` observes `object Sigma`.
-  *
-  * {{{
-  * type Params = (alpha: Alpha.Value, sigma: Sigma.Value)
-  * val logDensity = (params: Params) =>
-  *   ModelScorer.run:
-  *     observe(Y := yData):
-  *       observeAll(params):
-  *         model(x)
-  * }}}
-  *
-  * A field that matches no site of the model is an error, so a misspelled name
-  * cannot silently leave a site free.
-  */
-inline def observeAll[P, A](values: P)(model: ProbProg[A])(using
-    m: Mirror.ProductOf[P],
-    outer: ProbContext
-): A =
-  val names = constValueTuple[m.MirroredElemLabels].toList.map(_.toString)
-  val fields = values.asInstanceOf[Product].productIterator.toList
-  observeByName(names.zip(fields).toMap)(model)
-
-private[witdraw] def observeByName[A](byName: Map[String, Any])(
-    model: ProbProg[A]
-)(using outer: ProbContext): A =
-  def fieldName(site: Site[?]) = site.name.updated(0, site.name(0).toLower)
-  val observer = Observer(outer, site => byName.get(fieldName(site)))
-  val result = model(using observer)
-  val unmatched = byName.keySet -- observer.sampled.map(fieldName)
-  require(
-    unmatched.isEmpty,
-    s"Observed ${quoted(unmatched)}, but the model has no site of that name. " +
-      s"Sites in the model: ${observer.sampled.map(_.name).mkString(", ")}. " +
-      "Names are matched with the first letter lower-cased (object Sigma <-> field sigma)."
-  )
-  result
-
-/** The handler behind [[observe]] and [[observeAll]]: fixes every site for
-  * which `valueOf` has a value, and records which sites the model sampled.
+/** The handler behind [[observe]]: fixes every site for which `valueOf` has a
+  * value, and records which sites the model sampled.
   */
 private class Observer(outer: ProbContext, valueOf: Site[?] => Option[Any])
     extends Handler(outer):

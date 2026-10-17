@@ -92,20 +92,23 @@ val prior = ForwardSampler.run(Key(0))(model(xData))
 val withKnownSigma = ForwardSampler.run(Key(1)):
   observe(Sigma := Tensor0(1f)):
     model(xData)
-
-// log p(y, alpha, beta, sigma): the unnormalised log posterior of the parameters
-def logDensity(
-    alpha: Tensor0[Float32],
-    beta: Tensor1[Feature, Float32],
-    sigma: Tensor0[Float32]
-): Tensor0[Float32] =
-  ModelScorer.run:
-    observe(Y := yData, Alpha := alpha, Beta := beta, Sigma := sigma):
-      model(xData)
 ```
 
-`logDensity` is what gradient-based samplers such as NUTS work with. The
-[quickstart](docs/quickstart.md) is a complete, runnable version of this
+For inference, `Latent.discover` traces one run of the observed model and
+finds its latent sites, here `alpha`, `beta` and `sigma`. It gives a parameter
+type for them, the unnormalised log posterior that samplers such as NUTS work
+with, and a starting point. Constraints are declared per site:
+
+```scala
+val posterior = Latent.discover(Key(2), Constraint(Sigma, Bijector.exp)):
+  observe(Y := yData)(model(xData))
+
+val nuts = NUTSAlgorithm[posterior.Params](stepSize = 0.05)(posterior.logDensity)
+val draws = nuts.run(posterior.init, Key(3)).drop(500).take(2000).map(_._1).toList
+draws.map(_(Sigma))   // posterior draws of sigma, each a Sigma.Value (> 0)
+```
+
+The [quickstart](docs/quickstart.md) is a complete, runnable version of this
 example: it simulates data, runs NUTS and checks the posterior against the
 true parameters.
 

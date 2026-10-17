@@ -3,6 +3,8 @@ package witdraw.examples.stan
 import dimwit.*
 import dimwit.stats.*
 import witdraw.*
+import witdraw.mcmc.NUTSAlgorithm
+import witdraw.reparam.Bijector
 
 /** Univariate Gaussian mixture with `K` components, ported from the Stan
   * reference model:
@@ -30,28 +32,32 @@ import witdraw.*
   *
   * The per-point marginalisation `log_sum_exp_k (log theta_k + N(y_n | mu_k,
   * sigma_k))` is packaged as [[MixtureLikelihood]], a single distribution over
-  * the length-`N` observation vector, so `y` enters only via
-  * `observe(Y := y)`. Its `logProb` is the summed log-sum-exp; its `sample`
-  * draws a component per point and emits from it.
+  * the length-`N` observation vector, so `y` enters only via `observe(Y := y)`.
+  * Its `logProb` is the summed log-sum-exp; its `sample` draws a component per
+  * point and emits from it.
   *
   * Stan has no explicit prior on `theta`, so it gets the implicit uniform
   * (`Dirichlet(1,...,1)`) prior over the simplex. `sigma ~ lognormal(0, 2)` is
   * a small [[LogNormal]] defined here (dimwit has no built-in). The `ordered`
   * constraint on `mu` is an identifiability device against label switching; it
   * is a constrained-parameterisation concern for the sampler, so at the model
-  * level `mu` just carries its `normal(0, 10)` prior.
+  * level `mu` just carries its `normal(0, 10)` prior. The constraints of all
+  * three parameters are given to the sampler in [[latent]].
   */
 object Mixture:
 
   trait Comp derives Label // k = 1..K mixture components
   trait Data derives Label // n = 1..N observations
+  trait ThetaZ derives Label // the K-1 unconstrained coordinates of theta
 
-  object Theta extends Site[Tensor1[Comp, Float32]] // mixing proportions (simplex)
-  object Mu extends Site[Tensor1[Comp, Float32]]    // component locations
+  object Theta
+      extends Site[Tensor1[Comp, Float32]] // mixing proportions (simplex)
+  object Mu extends Site[Tensor1[Comp, Float32]] // component locations
   object Sigma extends Site[Tensor1[Comp, Float32]] // component scales (> 0)
-  object Y extends Site[Tensor1[Data, Float32]]     // observations
+  object Y extends Site[Tensor1[Data, Float32]] // observations
 
-  type Posterior = (
+  /** Values of the three parameters, e.g. the true values to simulate from. */
+  type MixtureParams = (
       theta: Tensor1[Comp, Float32],
       mu: Tensor1[Comp, Float32],
       sigma: Tensor1[Comp, Float32]
@@ -123,7 +129,7 @@ object Mixture:
 
   // -- the model --------------------------------------------------------
 
-  private def samplePriors(k: Int)(using ProbContext): Posterior =
+  private def samplePriors(k: Int)(using ProbContext): MixtureParams =
     val theta = Theta ~ Dirichlet(Tensor1(Axis[Comp] -> k).fill(1f))
     val mu = Mu ~ Normal(
       Tensor1(Axis[Comp] -> k).fill(0f),
@@ -135,32 +141,37 @@ object Mixture:
     )
     (theta = theta, mu = mu, sigma = sigma)
 
-  /** The model over `k` components and `n` observations. Forward-sampling
-    * draws a fresh mixture sample; observing `Y` scores the marginal.
+  /** The model over `k` components and `n` observations. Forward-sampling draws
+    * a fresh mixture sample; observing `Y` scores the marginal.
     */
   def model(k: Int, n: Int)(using ProbContext) =
     val p = samplePriors(k)
     val y = Y ~ MixtureLikelihood(p.theta, p.mu, p.sigma, n)
     (theta = p.theta, mu = p.mu, sigma = p.sigma, y = y)
 
-  /** The model conditioned on an observed sample (`k` = number of
-    * components).
+  /** The model conditioned on an observed sample (`k` = number of components).
     */
   def observed(y: Tensor1[Data, Float32], k: Int)(using ProbContext) =
     observe(Y := y)(model(k, y.shape(Axis[Data])))
 
-  def logDensity(y: Tensor1[Data, Float32])(
-      params: Posterior
-  ): Tensor0[Float32] =
-    ModelScorer.run:
-      observeAll(params)(observed(y, params.mu.shape(Axis[Comp])))
+  /** The latent sites of the model observed on `y`, with the constraints of the
+    * Stan model: `theta` on the simplex (by stick-breaking, from `K-1`
+    * unconstrained coordinates), `mu` ordered and `sigma` positive.
+    */
+  def latent(y: Tensor1[Data, Float32], k: Int, key: Key): Latent =
+    Latent.discover(
+      key,
+      Constraint(Theta, Bijector.simplexStickBreaking[ThetaZ, Comp](k)),
+      Constraint(Mu, Bijector.ordered[Comp](k)),
+      Constraint(Sigma, Bijector.exp)
+    )(observed(y, k))
 
   /** Draw parameters from their priors and simulate `n` points from a
     * `k`-component mixture.
     */
   def generate(k: Int, n: Int)(
       key: Key
-  ): (params: Posterior, path: Tensor1[Data, Float32]) =
+  ): (params: MixtureParams, path: Tensor1[Data, Float32]) =
     val r = ForwardSampler.run(key)(model(k, n))
     (
       params = (theta = r.theta, mu = r.mu, sigma = r.sigma),
@@ -168,7 +179,9 @@ object Mixture:
     )
 
   /** Simulate `n` points for fixed parameters. */
-  def simulate(params: Posterior, n: Int)(key: Key): Tensor1[Data, Float32] =
+  def simulate(params: MixtureParams, n: Int)(
+      key: Key
+  ): Tensor1[Data, Float32] =
     MixtureLikelihood(params.theta, params.mu, params.sigma, n).sample(key)
 
   // -- runnable example ----------------------------------------------
@@ -178,14 +191,43 @@ object Mixture:
     dimwit.initialize()
 
     // A well-separated two-component mixture (mu ordered, as Stan requires).
-    val params: Posterior = (
+    val params: MixtureParams = (
       theta = Tensor1(Axis[Comp] -> 2).fromArray(Array(0.7f, 0.3f)),
       mu = Tensor1(Axis[Comp] -> 2).fromArray(Array(-3f, 3f)),
       sigma = Tensor1(Axis[Comp] -> 2).fromArray(Array(0.5f, 1.0f))
     )
 
     val y = simulate(params, n = 80)(Key(1L))
-    println(s"simulated sample:\n$y")
-    println(
-      f"joint logDensity (marginal + priors) = ${logDensity(y)(params).item}%.3f"
+
+    val posterior = latent(y, k = 2, Key(2L))
+    println(s"latent sites: ${posterior.sites.map(_.name).mkString(", ")}")
+
+    val atTruth = posterior.initWith(
+      Theta := params.theta,
+      Mu := params.mu,
+      Sigma := params.sigma
     )
+    println(
+      f"joint log-density (marginal + priors) at the true parameters = ${posterior.modelLogDensity(atTruth).item}%.3f"
+    )
+
+    // The prior Normal(0, 10) does not order mu, so the traced draw of mu is
+    // usually outside the ordered constraint: start mu from ordered values.
+    val start = posterior.initWith(
+      Mu := Tensor1(Axis[Comp] -> 2).fromArray(Array(-1f, 1f))
+    )
+
+    val nuts =
+      NUTSAlgorithm[posterior.Params](stepSize = 0.05)(posterior.logDensity)
+    val (samples, infos) =
+      nuts.run(start, Key(3L)).drop(500).take(1000).toList.unzip
+    println(
+      f"NUTS divergences: ${infos.count(_.isDivergent)} / ${samples.size}"
+    )
+
+    trait Draw derives Label
+    def postMean(site: Site[Tensor1[Comp, Float32]]) =
+      stack(samples.map(_(site)), Axis[Draw]).mean(Axis[Draw])
+    println(s"theta: ${postMean(Theta)}   (true ${params.theta})")
+    println(s"mu:    ${postMean(Mu)}   (true ${params.mu})")
+    println(s"sigma: ${postMean(Sigma)}   (true ${params.sigma})")

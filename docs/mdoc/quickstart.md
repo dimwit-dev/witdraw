@@ -46,7 +46,7 @@ import dimwit.*
 import dimwit.stats.*
 import witdraw.*
 import witdraw.mcmc.NUTSAlgorithm
-import witdraw.reparam.{Bijector, Reparam}
+import witdraw.reparam.Bijector
 ```
 
 Every program that uses dimwit must initialise the dimwit runtime first:
@@ -117,9 +117,9 @@ dimwit uses explicit random keys (as in JAX). We split one root key into
 independent keys, one for each use, so that no key is used twice:
 
 ```scala mdoc:silent
-val (dataKey, noiseKey, priorKey, fixedKey, nutsKey) =
-  val ks = Key(42).split(5)
-  (ks(0), ks(1), ks(2), ks(3), ks(4))
+val (dataKey, noiseKey, priorKey, fixedKey, traceKey, nutsKey) =
+  val ks = Key(42).split(6)
+  (ks(0), ks(1), ks(2), ks(3), ks(4), ks(5))
 
 val sampleExtent = Axis[Sample] -> 100
 val featureExtent = Axis[Feature] -> 2
@@ -183,31 +183,35 @@ withFixedSigma.foreach { s =>
 ## Posterior inference
 
 Now we condition on the observed outcomes and ask which parameter values are
-plausible. Most inference algorithms in WitDraw need the (unnormalised) log
-density of the posterior as a function of the parameters. We get it by
-conditioning the model on both the data and a candidate parameter value, and
-scoring it with `ModelScorer`:
+plausible. The model observed on the data has three *latent* sites left,
+`Alpha`, `Beta` and `Sigma`: the parameters whose posterior we want.
+
+Most inference algorithms in WitDraw need the (unnormalised) log-density of
+the posterior as a function of these parameters. `Latent.discover` builds it
+for us. It runs the observed model forward once, records every site with the
+`withTrace` handler, and collects the sites that are not observed:
 
 ```scala mdoc:silent
-type PosteriorParams =
-  (alpha: Alpha.Value, beta: Beta.Value, sigma: Sigma.Value)
-
-val logDensity = (params: PosteriorParams) =>
-  ModelScorer.run:
-    observe(Y := yData):
-      observeAll(params):
-        model(xData)
+val latent = Latent.discover(traceKey, Constraint(Sigma, Bijector.exp)):
+  observe(Y := yData):
+    model(xData)
 ```
 
-Handlers nest like any other block. Each one sees every random variable that
-is sampled inside its block: here `observeAll` fixes the parameters,
-`observe` fixes `y`, and `ModelScorer` finds every site observed and adds up
-their log-densities.
+```scala mdoc
+latent.sites.map(_.name)
+```
 
-`observeAll` matches the fields of the named tuple to sites **by name**: a
-field `sigma` conditions the site `object Sigma` (the first letter of the site
-name lower-cased). A field whose name matches no site in the model is an
-error, so a misspelled name cannot silently leave a site unobserved.
+`latent.Params` is a parameter type made for this model: it holds one value
+per latent site, and `params(Sigma)` reads the value of a site, typed by the
+site (here a `Sigma.Value`). `latent.logDensity` is the log-density as a
+function of `latent.Params`, and `latent.init` is a starting point for
+inference: the values of the traced run.
+
+Handlers nest like any other block, and each one sees every random variable
+that is sampled inside its block. To compute `logDensity`, `Latent` wraps the
+model in one more `observe` that fixes the latent sites to the given
+parameters, so `ModelScorer` finds every site observed and adds up their
+log-densities.
 
 ### Handling the constraint on sigma
 
@@ -216,48 +220,30 @@ If we sampled $\sigma$ directly, the sampler would sooner or later try
 negative values, where the model's density is undefined. The standard fix is
 to sample $z = \log \sigma$ instead, which can be any real number.
 
-A `Bijector` describes such a change of variables, and `Reparam.build`
-combines one bijector per field into a bijector for the whole parameter
-tuple; fields without one, here `alpha` and `beta`, are left unchanged.
-`Reparam.pushForward` then turns the log-density over the original
-parameters into one over the unconstrained parameters, including the Jacobian
-correction:
-
-```scala mdoc:silent
-val toConstrained = Reparam.build[PosteriorParams, PosteriorParams](
-  (sigma = Bijector.exp[EmptyTuple])
-)
-val unconstrainedLogDensity = Reparam.pushForward(toConstrained)(logDensity)
-```
+A `Bijector` describes such a change of variables, and
+`Constraint(Sigma, Bijector.exp)` above applies one to `Sigma`. The sampler
+then moves in unconstrained space, and `latent.logDensity` includes the
+Jacobian correction for the change of variables. We never see $z$ ourselves:
+`params(Sigma)` always gives $\sigma = e^z$.
 
 ### Running NUTS
 
 NUTS is a variant of Hamiltonian Monte Carlo that chooses the length of each
 trajectory automatically. We still have to choose a step size: the sampler
 does not adapt it, so if you see many divergences or a low acceptance rate,
-reduce it.
-
-The sampler runs in unconstrained space, so we map the initial value there
-with `inverse`, and map the draws back with `forward`. We discard the first
-draws (burn-in) while the chain moves away from its starting point.
+reduce it. We discard the first draws (burn-in) while the chain moves away
+from its starting point.
 
 ```scala mdoc:silent
-val initParams: PosteriorParams = (
-  alpha = Tensor0(0f),
-  beta = Tensor1(featureExtent).fill(0f),
-  sigma = Tensor0(1f)
-)
-
 val burnIn = 500
 val nSamples = 2000
-val nuts = NUTSAlgorithm[PosteriorParams](stepSize = 0.05)(unconstrainedLogDensity)
-val (zSamples, infos) = nuts
-  .run(toConstrained.inverse(initParams), nutsKey)
+val nuts = NUTSAlgorithm[latent.Params](stepSize = 0.05)(latent.logDensity)
+val (samples, infos) = nuts
+  .run(latent.init, nutsKey)
   .drop(burnIn)
   .take(nSamples)
   .toList
   .unzip
-val samples = zSamples.map(toConstrained.forward)
 ```
 
 ### Checking the result
@@ -272,9 +258,9 @@ def summary[T <: Tuple: Labels](draws: List[Tensor[T, Float32]]) =
   val stacked = stack(draws, Axis[Draw])
   (stacked.mean(Axis[Draw]), stacked.std(Axis[Draw]))
 
-val (alphaMean, alphaSd) = summary(samples.map(_.alpha))
-val (betaMean, betaSd) = summary(samples.map(_.beta))
-val (sigmaMean, sigmaSd) = summary(samples.map(_.sigma))
+val (alphaMean, alphaSd) = summary(samples.map(_(Alpha)))
+val (betaMean, betaSd) = summary(samples.map(_(Beta)))
+val (sigmaMean, sigmaSd) = summary(samples.map(_(Sigma)))
 ```
 
 ```scala mdoc
@@ -303,11 +289,12 @@ priors. Since a model is an ordinary method, this is ordinary Scala: a part of
 a model is a method with a `(using ProbContext)` parameter, and calling it
 from another model runs it in the same context.
 
-The prior is a part of its own. It returns the parameters as a named tuple of
-type `PosteriorParams`, which we defined for inference above:
+The prior is a part of its own. It returns the parameters as a named tuple:
 
 ```scala mdoc:silent
-def prior(nFeatures: Int)(using ProbContext): PosteriorParams =
+type Params = (alpha: Alpha.Value, beta: Beta.Value, sigma: Sigma.Value)
+
+def prior(nFeatures: Int)(using ProbContext): Params =
   val alpha = Alpha ~ Normal(0f, 10f)
   val beta = Beta ~ Normal.isotropic(
     Tensor1(Axis[Feature] -> nFeatures).fill(0f),
@@ -323,7 +310,7 @@ where they come from, only that they have the right types:
 ```scala mdoc:silent
 def likelihood(
     x: Tensor2[Sample, Feature, Float32],
-    params: PosteriorParams
+    params: Params
 )(using ProbContext) =
   val mu = x.dot(Axis[Feature])(params.beta) +! params.alpha
   Y ~ Normal.isotropic(mu, params.sigma)
@@ -337,7 +324,7 @@ runs it, in the model's own context:
 ```scala mdoc:silent
 def regression(
     x: Tensor2[Sample, Feature, Float32],
-    prior: ProbProg[PosteriorParams]
+    prior: ProbProg[Params]
 )(using ProbContext) =
   val params = prior
   val y = likelihood(x, params)
@@ -345,27 +332,28 @@ def regression(
 ```
 
 `regression(xData, prior(nFeatures))` contains the same sites with the same
-distributions as `model(xData)`, so it can be used in exactly the same way.
-For example, its log-density agrees with the one we used for NUTS:
+distributions as `model(xData)`, so it can be used in exactly the same way,
+from `ForwardSampler` to `Latent.discover` and NUTS. For example, both give
+the same log-density at the true parameter values:
 
 ```scala mdoc
 val nFeatures = xData.shape(Axis[Feature])
 
-val composedLogDensity = (params: PosteriorParams) =>
+def logDensityAtTruth(m: ProbProg[Any]): Float =
   ModelScorer.run:
-    observe(Y := yData):
-      observeAll(params):
-        regression(xData, prior(nFeatures))
+    observe(Y := yData, Alpha := alphaTrue, Beta := betaTrue, Sigma := sigmaTrue):
+      m
+  .item
 
-(logDensity(initParams).item, composedLogDensity(initParams).item)
+(logDensityAtTruth(model(xData)), logDensityAtTruth(regression(xData, prior(nFeatures))))
 ```
 
 Because the prior is a parameter of `regression`, trying a different prior
-does not touch the likelihood. Any program that yields `PosteriorParams` fits,
+does not touch the likelihood. Any program that yields `Params` fits,
 for example one with tighter priors on the weights:
 
 ```scala mdoc:silent
-def tightPrior(nFeatures: Int)(using ProbContext): PosteriorParams =
+def tightPrior(nFeatures: Int)(using ProbContext): Params =
   val alpha = Alpha ~ Normal(0f, 10f)
   val beta = Beta ~ Normal.isotropic(
     Tensor1(Axis[Feature] -> nFeatures).fill(0f),
@@ -386,5 +374,4 @@ Two things to keep in mind when composing:
   compile error.
 - A site is identified by its object, and each site may be sampled only once
   per run; sampling it twice is an error. Two different objects are different
-  sites even if they share a name, but `observeAll` matches by name, so keep
-  site names unique within a model.
+  sites, even if they share a name.

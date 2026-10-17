@@ -3,6 +3,7 @@ package witdraw.examples.stan
 import dimwit.*
 import dimwit.stats.*
 import witdraw.*
+import witdraw.reparam.Bijector
 import plotwit.*
 import plotwit.PlotTargets.websocket
 import io.circe.Json
@@ -16,7 +17,8 @@ object AR1:
   object Sigma extends Site[Tensor0[Float32]] // innovation scale (> 0)
   object Y extends Site[Tensor1[Time, Float32]] // the full observed series
 
-  type Posterior = (
+  /** Values of the three parameters, e.g. the true values to simulate from. */
+  type AR1Params = (
       alpha: Tensor0[Float32],
       beta: Tensor0[Float32],
       sigma: Tensor0[Float32]
@@ -62,24 +64,23 @@ object AR1:
   def observed(y: Tensor1[Time, Float32])(using ProbContext) =
     observe(Y := y)(model(y.shape(Axis[Time])))
 
-  def logDensity(y: Tensor1[Time, Float32])(
-      params: Posterior
-  ): Tensor0[Float32] =
-    ModelScorer.run(observeAll(params)(observed(y)))
+  /** The latent sites of the model observed on `y`, with `sigma` positive. */
+  def latent(y: Tensor1[Time, Float32], key: Key): Latent =
+    Latent.discover(key, Constraint(Sigma, Bijector.exp))(observed(y))
 
   // -- Generative helpers -------------------------------------------------
 
   /** Roll the recursion forward for fixed parameters (e.g. posterior draws) —
     * useful for forecasting from the tail of an observed series.
     */
-  def simulate(params: Posterior, n: Int, y0: Tensor0[Float32])(
+  def simulate(params: AR1Params, n: Int, y0: Tensor0[Float32])(
       key: Key
   ): Tensor1[Time, Float32] =
     AR1Likelihood(params.alpha, params.beta, params.sigma, n, y0).sample(key)
 
   def generate(n: Int, y0: Tensor0[Float32] = Tensor0(0f))(
       key: Key
-  ): (params: Posterior, path: Tensor1[Time, Float32]) =
+  ): (params: AR1Params, path: Tensor1[Time, Float32]) =
     val r = ForwardSampler.run(key)(model(n, y0))
     (params = (alpha = r.alpha, beta = r.beta, sigma = r.sigma), path = r.y)
 
@@ -105,7 +106,7 @@ object AR1:
     val sigma = 1f
     val processMean = alpha / (1f - beta) // ≈ 3.33
 
-    val params: Posterior =
+    val params: AR1Params =
       (alpha = Tensor0(alpha), beta = Tensor0(beta), sigma = Tensor0(sigma))
 
     // Four series with no observation: pure draws from the process, each
@@ -121,9 +122,14 @@ object AR1:
     val observedPath = simulate(params, n, Tensor0(15f))(Key(99L))
 
     // Show the inference entry point runs on that "observed" series.
-    val ld = logDensity(observedPath)(params)
+    val posterior = latent(observedPath, Key(2L))
+    val atTruth = posterior.initWith(
+      Alpha := params.alpha,
+      Beta := params.beta,
+      Sigma := params.sigma
+    )
     println(
-      f"log density of the observed series under the model: ${ld.item}%.1f"
+      f"log density of the observed series under the model: ${posterior.modelLogDensity(atTruth).item}%.1f"
     )
 
     val named =

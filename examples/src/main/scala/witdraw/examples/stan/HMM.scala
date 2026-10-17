@@ -3,6 +3,8 @@ package witdraw.examples.stan
 import dimwit.*
 import dimwit.stats.*
 import witdraw.*
+import witdraw.mcmc.NUTSAlgorithm
+import witdraw.reparam.Bijector
 
 /** Three-state Hidden Markov Model with Gaussian emissions, ported from the
   * Stan reference model:
@@ -34,11 +36,11 @@ import witdraw.*
   * }}}
   *
   * `hmm_marginal` — the forward algorithm that marginalises out the latent
-  * state path — is packaged here as [[HMMMarginal]], a single distribution
-  * over the length-`N` observation sequence. Its `logProb` is the forward
-  * recursion in log space; its `sample` is the generative HMM (draw a state
-  * from `rho`, emit, transition, repeat). So `y` enters the model only
-  * through `observe(Y := y)`.
+  * state path — is packaged here as [[HMMMarginal]], a single distribution over
+  * the length-`N` observation sequence. Its `logProb` is the forward recursion
+  * in log space; its `sample` is the generative HMM (draw a state from `rho`,
+  * emit, transition, repeat). So `y` enters the model only through
+  * `observe(Y := y)`.
   *
   * `gamma_arr` / `gamma`: row-stochastic transition matrix,
   * `gamma[i, j] = P(state n+1 = j | state n = i)`. `rho`: distribution of the
@@ -48,19 +50,23 @@ import witdraw.*
   */
 object HMM:
 
-  trait Time derives Label  // n = 1..N
+  trait Time derives Label // n = 1..N
   trait State derives Label // the 3 hidden states
+  trait SimplexZ derives Label // the 2 unconstrained coordinates of a 3-simplex
 
   private val nStates = 3
 
-  object Mu extends Site[Tensor1[State, Float32]]    // emission means
-  object Sigma extends Site[Tensor0[Float32]]        // shared emission sd (> 0)
-  object Rho extends Site[Tensor1[State, Float32]]   // initial-state simplex
+  object Mu extends Site[Tensor1[State, Float32]] // emission means
+  object Sigma extends Site[Tensor0[Float32]] // shared emission sd (> 0)
+  object Rho extends Site[Tensor1[State, Float32]] // initial-state simplex
   object Gamma
-      extends Site[Tensor2[State, Prime[State], Float32]] // transition matrix, rows simplex
-  object Y extends Site[Tensor1[Time, Float32]]      // observed sequence
+      extends Site[
+        Tensor2[State, Prime[State], Float32]
+      ] // transition matrix, rows simplex
+  object Y extends Site[Tensor1[Time, Float32]] // observed sequence
 
-  type Posterior = (
+  /** Values of the four parameters, e.g. the true values to simulate from. */
+  type HMMParams = (
       mu: Tensor1[State, Float32],
       sigma: Tensor0[Float32],
       rho: Tensor1[State, Float32],
@@ -139,8 +145,8 @@ object HMM:
       stack(ys, Axis[Time])
 
   /** `Tensor2[State, Prime[State]]` whose rows are i.i.d. `Dirichlet(1,1,1)` —
-    * Stan's implicit uniform prior over each `simplex[3]` row of the
-    * transition matrix.
+    * Stan's implicit uniform prior over each `simplex[3]` row of the transition
+    * matrix.
     */
   class RowwiseUniformSimplex
       extends Distribution[(State, Prime[State]), Float32]:
@@ -157,7 +163,7 @@ object HMM:
 
   // -- the model ------------------------------------------------------
 
-  private def samplePriors(using ProbContext): Posterior =
+  private def samplePriors(using ProbContext): HMMParams =
     val mu = Mu ~ Normal(
       Tensor1(Axis[State] -> nStates).fill(0f),
       Tensor1(Axis[State] -> nStates).fill(1f)
@@ -181,15 +187,28 @@ object HMM:
   def observed(y: Tensor1[Time, Float32])(using ProbContext) =
     observe(Y := y)(model(y.shape(Axis[Time])))
 
-  def logDensity(y: Tensor1[Time, Float32])(
-      params: Posterior
-  ): Tensor0[Float32] =
-    ModelScorer.run(observeAll(params)(observed(y)))
+  /** The latent sites of the model observed on `y`, with the constraints of the
+    * Stan model: `sigma` positive, `rho` and every row of `gamma` on the
+    * simplex.
+    */
+  def latent(y: Tensor1[Time, Float32], key: Key): Latent =
+    val simplex = Bijector.simplexStickBreaking[SimplexZ, State](nStates)
+    Latent.discover(
+      key,
+      Constraint(Sigma, Bijector.exp),
+      Constraint(Rho, simplex),
+      Constraint(
+        Gamma,
+        Bijector.rowwise[State, SimplexZ, Prime[State]](
+          Bijector.simplexStickBreaking[SimplexZ, Prime[State]](nStates)
+        )
+      )
+    )(observed(y))
 
   /** Draw parameters from their priors and simulate a length-`n` sequence. */
   def generate(n: Int)(
       key: Key
-  ): (params: Posterior, path: Tensor1[Time, Float32]) =
+  ): (params: HMMParams, path: Tensor1[Time, Float32]) =
     val r = ForwardSampler.run(key)(model(n))
     (
       params = (mu = r.mu, sigma = r.sigma, rho = r.rho, gamma = r.gamma),
@@ -197,8 +216,10 @@ object HMM:
     )
 
   /** Simulate a length-`n` sequence for fixed parameters. */
-  def simulate(params: Posterior, n: Int)(key: Key): Tensor1[Time, Float32] =
-    HMMMarginal(params.mu, params.sigma, params.rho, params.gamma, n).sample(key)
+  def simulate(params: HMMParams, n: Int)(key: Key): Tensor1[Time, Float32] =
+    HMMMarginal(params.mu, params.sigma, params.rho, params.gamma, n).sample(
+      key
+    )
 
   // -- runnable example ---------------------------------------------------
 
@@ -208,7 +229,7 @@ object HMM:
 
     // Well-separated components with sticky transitions, so the latent
     // regime is visible in the simulated series.
-    val params: Posterior = (
+    val params: HMMParams = (
       mu = Tensor1(Axis[State] -> nStates).fromArray(Array(-4f, 0f, 4f)),
       sigma = Tensor0(0.7f),
       rho = Tensor1(Axis[State] -> nStates).fromArray(Array(0.8f, 0.1f, 0.1f)),
@@ -220,7 +241,32 @@ object HMM:
     )
 
     val y = simulate(params, n = 60)(Key(1L))
-    println(s"simulated observations:\n$y")
-    println(
-      f"joint logDensity (hmm_marginal + priors) = ${logDensity(y)(params).item}%.3f"
+
+    val posterior = latent(y, Key(2L))
+    println(s"latent sites: ${posterior.sites.map(_.name).mkString(", ")}")
+
+    val atTruth = posterior.initWith(
+      Mu := params.mu,
+      Sigma := params.sigma,
+      Rho := params.rho,
+      Gamma := params.gamma
     )
+    println(
+      f"joint log-density (hmm_marginal + priors) at the true parameters = ${posterior.modelLogDensity(atTruth).item}%.3f"
+    )
+
+    val nuts =
+      NUTSAlgorithm[posterior.Params](stepSize = 0.05)(posterior.logDensity)
+    val (samples, infos) =
+      nuts.run(posterior.init, Key(3L)).drop(500).take(500).toList.unzip
+    println(
+      f"NUTS divergences: ${infos.count(_.isDivergent)} / ${samples.size}"
+    )
+
+    trait Draw derives Label
+    val muMean = stack(samples.map(_(Mu)), Axis[Draw]).mean(Axis[Draw])
+    val sigmaMean = stack(samples.map(_(Sigma)), Axis[Draw]).mean
+    println(
+      s"mu:    $muMean   (true ${params.mu}, up to the order of the states)"
+    )
+    println(f"sigma: ${sigmaMean.item}%.3f   (true ${params.sigma.item})")

@@ -7,11 +7,12 @@ import dimwit.stats.Normal
 import dimwit.stats.Uniform
 import viz.PlotTargets.websocket
 import viz.macros.BoolField
-import witdraw.ModelScorer
+import witdraw.Constraint
+import witdraw.Latent
 import witdraw.ProbContext
 import witdraw.Site
 import witdraw.observe
-import witdraw.observeAll
+import witdraw.reparam.Bijector
 import witling.DataFrame
 import witdraw.mcmc.NUTSAlgorithm
 import plotwit.PlotTargets.websocket
@@ -120,37 +121,34 @@ object Chimpanzees:
         pulledLeft = pulledLeft
       )
 
-    type Posterior = (
-        chimpIntercept: Tensor1[Chimp, Float32],
-        populationIntercept: Tensor0[Float32],
-        prosocialEffect: Tensor0[Float32],
-        partnerEffect: Tensor0[Float32],
-        chimpVariability: Tensor0[Float32]
-    )
-
-    def logDensity(posteriorParams: Posterior) =
-      ModelScorer.run:
-        observe(PulledLeft := pulledLeft):
-          observeAll(posteriorParams)(model)
+    // The between-chimp spread is a scale, so it is sampled on the log scale.
+    val posterior =
+      Latent.discover(Key(1), Constraint(ChimpVariability, Bijector.exp)):
+        observe(PulledLeft := pulledLeft)(model)
+    println(s"latent sites: ${posterior.sites.map(_.name).mkString(", ")}")
 
     val burnIn = 2000
     val nSamples = 5000
-    val nuts = NUTSAlgorithm[Posterior](stepSize = 0.1)(logDensity)
+    val nuts =
+      NUTSAlgorithm[posterior.Params](stepSize = 0.1)(posterior.logDensity)
     val (nutsSamples, nutsInfos) = nuts
-      .run(
-        (
-          chimpIntercept = Tensor1(Axis[Chimp] -> nChimps).fill(0f),
-          populationIntercept = Tensor0(0f),
-          prosocialEffect = Tensor0(0f),
-          partnerEffect = Tensor0(0f),
-          chimpVariability = Tensor0(1f)
-        ),
-        Key(42)
-      )
+      .run(posterior.init, Key(42))
       .drop(burnIn)
       .take(nSamples)
       .toList
       .unzip
+    println(s"NUTS divergences: ${nutsInfos.count(_.isDivergent)} / $nSamples")
+    for site <- List(
+        PopulationIntercept,
+        ProsocialEffect,
+        PartnerEffect,
+        ChimpVariability
+      )
+    do
+      val draws = stack(nutsSamples.map(_(site)), Axis[Trial])
+      println(
+        f"${site.name}%-20s mean ${draws.mean.item}%7.3f  sd ${draws.std.item}%6.3f"
+      )
 
     // val pChimpIntercept =
     //   Plotting.plotHistogram(
@@ -159,25 +157,25 @@ object Chimpanzees:
     //   )
     val pProsocialEffect =
       histogramPlot(
-        stack(nutsSamples.map(_.prosocialEffect), Axis[Trial]),
+        stack(nutsSamples.map(_(ProsocialEffect)), Axis[Trial]),
         _.title := "Posterior of prosocialEffect"
       )
     val pPartnerEffect =
       histogramPlot(
-        stack(nutsSamples.map(_.partnerEffect), Axis[Trial]),
+        stack(nutsSamples.map(_(PartnerEffect)), Axis[Trial]),
         _.title := "Posterior of partnerEffect"
       )
 
     val chimp0Plot = histogramPlot(
       stack(
-        nutsSamples.map(_.chimpIntercept.slice(Axis[Chimp].at(0))),
+        nutsSamples.map(_(ChimpIntercept).slice(Axis[Chimp].at(0))),
         Axis[Trial]
       ),
       _.title := "Posterior of chimpIntercept[0]"
     )
     val chimp1Plot = histogramPlot(
       stack(
-        nutsSamples.map(_.chimpIntercept.slice(Axis[Chimp].at(1))),
+        nutsSamples.map(_(ChimpIntercept).slice(Axis[Chimp].at(1))),
         Axis[Trial]
       ),
       _.title := "Posterior of chimpIntercept[1]"

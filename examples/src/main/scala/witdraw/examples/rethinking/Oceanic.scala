@@ -6,6 +6,7 @@ import witdraw.*
 import witling.*
 import java.io.File
 import witdraw.mcmc.NUTSAlgorithm
+import witdraw.reparam.Bijector
 import plotwit.plots.histogramPlot
 
 object OceanicExample:
@@ -113,51 +114,47 @@ object OceanicExample:
       klineTyped.cols.total_tools.toArray.map(_.toInt)
     )
 
-    type PosteriorParams = (
-        globalIntercept: Tensor0[Float32],
-        societyIntercept: Tensor1[Society, Float32],
-        societySlope: Tensor0[Float32],
-        eta2: Tensor0[Float32],
-        rho2: Tensor0[Float32]
-    )
+    // eta2 and rho2 are the scale and decay rate of the covariance kernel,
+    // so both are sampled on the log scale.
+    val posterior = Latent.discover(
+      Key(1),
+      Constraint(Eta2, Bijector.exp),
+      Constraint(Rho2, Bijector.exp)
+    ):
+      observe(NumTools := numTools)(model(population, distances))
+    println(s"latent sites: ${posterior.sites.map(_.name).mkString(", ")}")
 
-    val logDensity = (params: PosteriorParams) =>
-      ModelScorer.run:
-        observe(NumTools := numTools):
-          observeAll(params)(model(population, distances))
-
-    val initialParams = (
-      globalIntercept = Tensor0(0f),
-      societyIntercept = Tensor1(Axis[Society] -> 10).fill(0f),
-      societySlope = Tensor0(0f),
-      eta2 = Tensor0(1f),
-      rho2 = Tensor0(1f)
-    )
     val burnIn = 200
     val nSamples = 500
-    val nuts = NUTSAlgorithm[PosteriorParams](stepSize = 0.01)(logDensity)
+    val nuts =
+      NUTSAlgorithm[posterior.Params](stepSize = 0.01)(posterior.logDensity)
     val (nutsSamples, nutsInfos) = nuts
-      .run(initialParams, Key(42))
+      .run(posterior.init, Key(42))
       .drop(burnIn)
       .take(nSamples)
       .toList
       .unzip
 
     trait Sample derives Label
-    println("NUTS sampling completed.")
+    println(s"NUTS divergences: ${nutsInfos.count(_.isDivergent)} / $nSamples")
+    for site <- List(GlobalIntercept, SocietySlope, Eta2, Rho2) do
+      val draws = stack(nutsSamples.map(_(site)), Axis[Sample])
+      println(
+        f"${site.name}%-16s mean ${draws.mean.item}%7.3f  sd ${draws.std.item}%6.3f"
+      )
     val p1 = histogramPlot(
-      stack(nutsSamples.map(_.globalIntercept), Axis[Sample]),
+      stack(nutsSamples.map(_(GlobalIntercept)), Axis[Sample]),
       _.title := "Posterior of globalIntercept"
     )
 
     val p2 = histogramPlot(
-      stack(nutsSamples.map(_.societySlope), Axis[Sample]),
+      stack(nutsSamples.map(_(SocietySlope)), Axis[Sample]),
       _.title := "Posterior of societySlope"
     )
 
     val p3 = histogramPlot(
       stack(
-        nutsSamples.map(_.societyIntercept.slice(Axis[Society].at(0))),
+        nutsSamples.map(_(SocietyIntercept).slice(Axis[Society].at(0))),
         Axis[Sample]
       ),
       _.title := "Posterior of societyIntercept 0"
@@ -165,7 +162,7 @@ object OceanicExample:
 
     val p4 = histogramPlot(
       stack(
-        nutsSamples.map(_.societyIntercept.slice(Axis[Society].at(1))),
+        nutsSamples.map(_(SocietyIntercept).slice(Axis[Society].at(1))),
         Axis[Sample]
       ),
       _.title := "Posterior of societyIntercept 1"

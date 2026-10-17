@@ -3,6 +3,8 @@ package witdraw
 import dimwit.*
 import dimwit.stats.*
 import scala.collection.mutable
+import witdraw.reparam.Bijector
+import dimwit.tensortree.TensorTree
 
 class ProbContextSuite extends munit.FunSuite:
 
@@ -66,9 +68,9 @@ class ProbContextSuite extends munit.FunSuite:
         model
     assertEqualsFloat(lp.item, manualLogProb(0.3f, 1.5f), 1e-4f)
 
-  test("observe composes with observeAll and works around sub-models"):
+  test("observe nests, also around sub-models"):
     val lp = ModelScorer.run:
-      observeAll((mu = Tensor0(0.3f), sigma = Tensor0(1.5f))):
+      observe(Mu := Tensor0(0.3f), Sigma := Tensor0(1.5f)):
         val p = prior
         observe(Y := yData)(likelihood(p.mu, p.sigma))
     assertEqualsFloat(lp.item, manualLogProb(0.3f, 1.5f), 1e-4f)
@@ -79,7 +81,8 @@ class ProbContextSuite extends munit.FunSuite:
 
   test("the log-density is differentiable through handlers"):
     val logDensity = (p: (mu: Tensor0[Float32], sigma: Tensor0[Float32])) =>
-      ModelScorer.run(observe(Y := yData)(observeAll(p)(model)))
+      ModelScorer.run:
+        observe(Y := yData, Mu := p.mu, Sigma := p.sigma)(model)
     val grad =
       Autodiff.grad(logDensity)((mu = Tensor0(0f), sigma = Tensor0(1f)))
     // d/dmu at mu = 0, sigma = 1: sum(y) - mu / 100
@@ -110,13 +113,9 @@ class ProbContextSuite extends munit.FunSuite:
     ForwardSampler.run(Key(1))(recordSites(observe(Y := yData)(model)))
     assertEquals(seen.toList, List("Mu", "Sigma", "Y=obs"))
 
-  test("errors: unknown observation, unknown field, double observe"):
+  test("errors: unknown observation, double observe"):
     intercept[IllegalArgumentException]:
       ForwardSampler.run(Key(1))(observe(Y := yData)(prior))
-    intercept[IllegalArgumentException]:
-      ForwardSampler.run(Key(1))(
-        observeAll((mu = Tensor0(0f), sgma = Tensor0(1f)))(model)
-      )
     intercept[IllegalArgumentException]:
       ForwardSampler.run(Key(1))(
         observe(Y := yData)(observe(Y := yData)(model))
@@ -132,3 +131,104 @@ class ProbContextSuite extends munit.FunSuite:
     intercept[IllegalArgumentException]:
       ForwardSampler.run(Key(1)):
         (Mu ~ Normal(0f, 1f), Mu ~ Normal(0f, 1f))
+
+  test("withTrace records every site, its value and whether it was observed"):
+    val (r, tr) =
+      ForwardSampler.run(Key(1))(withTrace(observe(Y := yData)(model)))
+    assertEquals(tr.sites, Seq(Mu, Sigma, Y))
+    assertEquals(tr.latentSites, Seq(Mu, Sigma))
+    assertEquals(tr.observedSites, Seq(Y))
+    assertEquals(tr(Mu).item, r.mu.item)
+    val total = tr.entries.map(_.logProb).reduce(_ + _)
+    assertEqualsFloat(total.item, manualLogProb(r.mu.item, r.sigma.item), 1e-3f)
+
+  lazy val latent = Latent.discover(Key(1), Constraint(Sigma, Bijector.exp)):
+    observe(Y := yData)(model)
+
+  test("Latent finds the latent sites and starts from the traced values"):
+    assertEquals(latent.sites, Seq(Mu, Sigma))
+    val (_, tr) =
+      ForwardSampler.run(Key(1))(withTrace(observe(Y := yData)(model)))
+    assertEqualsFloat(latent.init(Mu).item, tr(Mu).item, 1e-6f)
+    assertEqualsFloat(latent.init(Sigma).item, tr(Sigma).item, 1e-5f)
+
+  test("Latent log-densities: model density, plus the Jacobian for sampling"):
+    val p = latent.initWith(Mu := Tensor0(0.3f), Sigma := Tensor0(1.5f))
+    assertEqualsFloat(p(Sigma).item, 1.5f, 1e-5f)
+    assertEqualsFloat(
+      latent.modelLogDensity(p).item,
+      manualLogProb(0.3f, 1.5f),
+      1e-4f
+    )
+    // sigma = exp(z), so log |d sigma / dz| = z = log sigma
+    assertEqualsFloat(
+      latent.logDensity(p).item,
+      manualLogProb(0.3f, 1.5f) + math.log(1.5).toFloat,
+      1e-4f
+    )
+
+  test("Latent.Params is a tensor tree, so it can be differentiated"):
+    val p = latent.initWith(Mu := Tensor0(0f), Sigma := Tensor0(1f))
+    val grad = Autodiff.grad(latent.modelLogDensity)(p).value
+    // d/dmu at mu = 0, sigma = 1: sum(y) - mu / 100
+    assertEqualsFloat(grad(Mu).item, 1.5f, 1e-4f)
+
+  test(
+    "Latent errors: unknown site, constraint on observed site, discrete site"
+  ):
+    intercept[NoSuchElementException](latent.init(Y))
+    intercept[IllegalArgumentException]:
+      Latent.discover(Key(1), Constraint(Y, Bijector.exp[Tuple1[Sample]])):
+        observe(Y := yData)(model)
+    // Binomial samples are float32 at runtime, so the check must use the
+    // site's declared type
+    object Count extends Site[Tensor0[Int32]]
+    val e = intercept[IllegalArgumentException]:
+      Latent.discover(Key(1))(Count ~ Binomial(3, Prob(Tensor0(0.5f))))
+    assert(e.getMessage.contains("'Count' is Int32"), e.getMessage)
+
+  trait Comp derives Label
+  trait CompZ derives Label
+  object Weights extends Site[Tensor1[Comp, Float32]]
+  object Locs extends Site[Tensor1[Comp, Float32]]
+
+  def mixturePrior(using ProbContext) =
+    (
+      weights = Weights ~ Dirichlet(Tensor1(Axis[Comp] -> 3).fill(1f)),
+      locs = Locs ~ Normal(
+        Tensor1(Axis[Comp] -> 3).fill(0f),
+        Tensor1(Axis[Comp] -> 3).fill(10f)
+      )
+    )
+
+  final lazy val mixture = Latent.discover(
+    Key(5),
+    Constraint(Weights, Bijector.simplexStickBreaking[CompZ, Comp](3)),
+    Constraint(Locs, Bijector.ordered[Comp](3))
+  )(mixturePrior)
+
+  test("a constraint may change the shape: simplex from K-1 coordinates"):
+    val weights = Tensor1(Axis[Comp]).fromArray(Array(0.2f, 0.5f, 0.3f))
+    val locs = Tensor1(Axis[Comp]).fromArray(Array(-1f, 0f, 2f))
+    val p = mixture.initWith(Weights := weights, Locs := locs)
+    assertEqualsFloat(p(Weights).sum.item, 1f, 1e-5f)
+    assertEqualsFloat(p(Weights).slice(Axis[Comp].at(1)).item, 0.5f, 1e-5f)
+    val expected = ModelScorer.run:
+      observe(Weights := weights, Locs := locs)(mixturePrior)
+    assertEqualsFloat(mixture.modelLogDensity(p).item, expected.item, 1e-3f)
+    // the unconstrained parameters have K-1 coordinates for the weights
+    val leafSizes = TensorTree[mixture.Params]
+      .mapLeaves(
+        p,
+        [T <: Tuple, V] =>
+          (_: Labels[T]) ?=> (t: Tensor[T, V]) => t.shape.dimensions.product
+      )
+      .toList
+    assertEquals(leafSizes, List(2, 3))
+
+  test("a start value outside its constraint is an error, with a hint"):
+    val unordered = Tensor1(Axis[Comp]).fromArray(Array(1f, -1f, 0f))
+    val e =
+      intercept[IllegalArgumentException](mixture.initWith(Locs := unordered))
+    assert(e.getMessage.contains("given value of 'Locs'"), e.getMessage)
+    assert(e.getMessage.contains("latent.initWith(Locs := ...)"), e.getMessage)

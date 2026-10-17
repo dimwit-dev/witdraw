@@ -12,7 +12,8 @@ import dimwit.tensor.Labels
   *
   * Convention: we sample in `Z`-space, so the pushed-forward target density is
   * `p_X(forward(z)) * |det J_forward(z)|`, i.e.
-  * `logDensity(forward(z)) + logDetJac(z)` — see `Reparam.pushForward`.
+  * `logDensity(forward(z)) + logDetJac(z)` — see `Latent.logDensity`, which
+  * applies bijectors to latent sites given as [[witdraw.Constraint]]s.
   */
 trait Bijector[Z, X]:
 
@@ -36,10 +37,8 @@ trait Bijector[Z, X]:
 
 object Bijector:
 
-  /** Untyped identity — used by `Reparam` for fields with no declared
-    * constraint.
-    */
-  private[reparam] val identityErased: Bijector[Any, Any] =
+  /** Untyped identity — used by `Latent` for sites without a constraint. */
+  private[witdraw] val identityErased: Bijector[Any, Any] =
     new Bijector[Any, Any]:
       def forward(z: Any): Any = z
       def inverse(x: Any): Any = x
@@ -187,3 +186,16 @@ object Bijector:
           remaining = remaining - remaining * zeta
           i += 1
         acc
+
+  /** Applies a vector bijector to every row of a matrix, e.g. a stick-breaking
+    * simplex per row for a row-stochastic transition matrix (Stan's
+    * `array[K] simplex[K]`). The log-det-Jacobian is the sum over the rows.
+    */
+  def rowwise[R: Label, LZ: Label, LX: Label](
+      row: Bijector[Tensor1[LZ, Float32], Tensor1[LX, Float32]]
+  ): Bijector[Tensor2[R, LZ, Float32], Tensor2[R, LX, Float32]] =
+    new Bijector[Tensor2[R, LZ, Float32], Tensor2[R, LX, Float32]]:
+      def forward(z: Tensor2[R, LZ, Float32]) = z.vmap(Axis[R])(row.forward)
+      def inverse(x: Tensor2[R, LX, Float32]) = x.vmap(Axis[R])(row.inverse)
+      def logDetJac(z: Tensor2[R, LZ, Float32]) =
+        z.vmap(Axis[R])(row.logDetJac).sum
