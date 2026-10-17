@@ -193,8 +193,8 @@ val logDensity = (params: PosteriorParams) =>
 
 `observeAll` matches the fields of the named tuple to sites **by name**: a
 field `sigma` conditions the site `object Sigma` (the first letter of the site
-name lower-cased). A field whose name matches no site is ignored, so check the
-spelling.
+name lower-cased). A field whose name matches no site in the model is an
+error, so a misspelled name cannot silently leave a site unobserved.
 
 ### Handling the constraint on sigma
 
@@ -281,3 +281,81 @@ run has no divergent transitions and a reasonably high acceptance rate:
 val divergences = infos.count(_.isDivergent)
 val meanAcceptance = infos.map(_.acceptanceRate).sum / infos.size
 ```
+
+## Composing models
+
+`model` above tells the whole story in one block. As models grow, it helps to
+split them into parts, for example to reuse a likelihood with different
+priors. A `ProbProg` can run another `ProbProg` as part of its own story:
+inside a `ProbProg:` block, `.run` executes the sub-program with whatever
+interpreter is running the outer one.
+
+The prior is a program of its own. It returns the parameters as a named tuple
+of type `PosteriorParams`, which we defined for inference above:
+
+```scala mdoc:silent
+def prior(nFeatures: Int): ProbProg[PosteriorParams] = ProbProg:
+  val alpha = Alpha ~ Normal(0f, 10f)
+  val beta = Beta ~ Normal.isotropic(
+    Tensor1(Axis[Feature] -> nFeatures).fill(0f),
+    10f
+  )
+  val sigma = Sigma ~ HalfCauchy(0f, 5f)
+  (alpha = alpha, beta = beta, sigma = sigma)
+```
+
+The likelihood takes the parameters as ordinary tensors. It does not know
+where they come from, only that they have the right types:
+
+```scala mdoc:silent
+def likelihood(
+    x: Tensor2[Sample, Feature, Float32],
+    params: PosteriorParams
+) = ProbProg:
+  val mu = x.dot(Axis[Feature])(params.beta) +! params.alpha
+  Y ~ Normal.isotropic(mu, params.sigma)
+```
+
+The full model runs the prior, passes its result to the likelihood, and
+returns all variables:
+
+```scala mdoc:silent
+def regression(
+    x: Tensor2[Sample, Feature, Float32],
+    prior: ProbProg[PosteriorParams]
+) = ProbProg:
+  val params = prior.run
+  val y = likelihood(x, params).run
+  (alpha = params.alpha, beta = params.beta, sigma = params.sigma, y = y)
+
+val composedOnX = regression(xData, prior(xData.shape(Axis[Feature])))
+```
+
+`composedOnX` contains the same sites with the same distributions as
+`modelOnX`, so it can be used in exactly the same way: everything in this
+guide, from `observe` to `logDensity` and NUTS, works with it unchanged.
+
+Because the prior is a parameter of `regression`, trying a different prior
+does not touch the likelihood. Any program that yields `PosteriorParams` fits,
+for example one with tighter priors on the weights:
+
+```scala mdoc:silent
+def tightPrior(nFeatures: Int): ProbProg[PosteriorParams] = ProbProg:
+  val alpha = Alpha ~ Normal(0f, 10f)
+  val beta = Beta ~ Normal.isotropic(
+    Tensor1(Axis[Feature] -> nFeatures).fill(0f),
+    1f
+  )
+  val sigma = Sigma ~ HalfCauchy(0f, 5f)
+  (alpha = alpha, beta = beta, sigma = sigma)
+
+val tightOnX = regression(xData, tightPrior(xData.shape(Axis[Feature])))
+```
+
+Two things to keep in mind when composing:
+
+- `.run` needs an interpreter to run under, so it can only be called inside a
+  `ProbProg:` block. Calling it anywhere else is a compile error.
+- Sites are global names. Each site should appear exactly once in the composed
+  model: if two parts sample the same site, `observe` would fix both to the
+  same value.
