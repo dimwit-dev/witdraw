@@ -87,57 +87,53 @@ object Bijector:
   /** Stick-breaking simplex map — Stan's `simplex[k]`. `Z` is `k-1`
     * unconstrained reals (`LZ` axis), `X` is a `k`-vector on the simplex (`LC`
     * axis).
+    *
+    * Piece `i` takes the fraction `ζ_i = σ(z_i + offset_i)` of the stick left
+    * over by the pieces before it, and the last piece is the rest. The offsets
+    * make `z = 0` the uniform simplex.
     */
   def simplexStickBreaking[LZ: Label, LC: Label]
       : Bijector[Tensor1[LZ, Float32], Tensor1[LC, Float32]] =
     val zAxis = Axis[LZ]
     val cAxis = Axis[LC]
-    // logit shift, so that z = 0 gives the uniform simplex
-    def offset(k: Int, i: Int): Tensor0[Float32] =
-      Tensor0(math.log(1.0 / (k - 1 - i)).toFloat)
+    val one = Tensor0(1f)
+
+    // offset_i = log(1 / (k - 1 - i)), for the n = k - 1 coordinates of z
+    def offsets(n: Int) =
+      Tensor1(zAxis).fromArray(Array.tabulate(n)(i => math.log(1.0 / (n - i)).toFloat))
+
+    // ζ, and the stick left before each piece: 1, (1-ζ_0), (1-ζ_0)(1-ζ_1), …
+    def fractions(z: Tensor1[LZ, Float32]) =
+      val n = z.shape(zAxis)
+      val zeta = Tensor.sigmoid(z + offsets(n))
+      val leftAfter = (one -! zeta).cumprod(zAxis)
+      val leftBefore = concatenate(
+        Seq(Tensor1(zAxis -> 1).fill(1f), leftAfter.slice(zAxis.at(0 until n - 1))),
+        zAxis
+      )
+      (zeta, leftBefore, leftAfter)
 
     new Bijector[Tensor1[LZ, Float32], Tensor1[LC, Float32]]:
       def forward(z: Tensor1[LZ, Float32]) =
-        val k = z.shape(zAxis) + 1
-        val xs = scala.collection.mutable.ArrayBuffer[Tensor0[Float32]]()
-        var remaining = Tensor0(1f)
-        var i = 0
-        while i < k - 1 do
-          val zeta =
-            Tensor.sigmoid(z.slice(zAxis.at(i)) + offset(k, i))
-          val xi = remaining * zeta
-          xs += xi
-          remaining = remaining - xi
-          i += 1
-        xs += remaining
-        stack(xs.toSeq, cAxis)
+        val n = z.shape(zAxis)
+        val (zeta, leftBefore, leftAfter) = fractions(z)
+        concatenate(
+          Seq(leftBefore * zeta, leftAfter.slice(zAxis.at(n - 1 until n)))
+            .map(_.relabelTo(cAxis)),
+          cAxis
+        )
 
       def inverse(x: Tensor1[LC, Float32]) =
-        val k = x.shape(cAxis)
-        val zs = scala.collection.mutable.ArrayBuffer[Tensor0[Float32]]()
-        var remaining = Tensor0(1f)
-        var i = 0
-        while i < k - 1 do
-          val xi = x.slice(cAxis.at(i))
-          val zeta = xi / remaining
-          zs += (zeta / (Tensor0(1f) - zeta)).log - offset(k, i) // logit(zeta) - shift
-          remaining = remaining - xi
-          i += 1
-        stack(zs.toSeq, zAxis)
+        val n = x.shape(cAxis) - 1
+        val pieces = x.slice(cAxis.at(0 until n)).relabelTo(zAxis)
+        val leftBefore = (one -! pieces.cumsum(zAxis)) + pieces
+        val zeta = pieces / leftBefore
+        (zeta / (one -! zeta)).log - offsets(n) // logit(ζ) - offset
 
       def logDetJac(z: Tensor1[LZ, Float32]) =
-        val k = z.shape(zAxis) + 1
-        var acc = Tensor0(0f)
-        var remaining = Tensor0(1f)
-        var i = 0
-        while i < k - 1 do
-          val zeta =
-            Tensor.sigmoid(z.slice(zAxis.at(i)) + offset(k, i))
-          // ∑ [ log ζ_i + log(1-ζ_i) + log(stick remaining before i) ]
-          acc = acc + (zeta * (Tensor0(1f) - zeta)).log + remaining.log
-          remaining = remaining - remaining * zeta
-          i += 1
-        acc
+        // ∑ [ log ζ_i + log(1 - ζ_i) + log(stick left before i) ]
+        val (zeta, leftBefore, _) = fractions(z)
+        ((zeta * (one -! zeta)).log + leftBefore.log).sum
 
   /** Applies a vector bijector to every row of a matrix, e.g. a stick-breaking
     * simplex per row for a row-stochastic transition matrix (Stan's
