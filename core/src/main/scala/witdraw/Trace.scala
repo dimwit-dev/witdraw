@@ -31,19 +31,14 @@ final class Trace(val entries: Seq[TraceEntry[?, ?]]):
     entries.filterNot(_.observed).map(_.site)
   def observedSites: Seq[SiteDef[?, ?]] = entries.filter(_.observed).map(_.site)
 
-  def contains(site: SiteDef[?, ?]): Boolean = bySite.contains(site)
-
-  /** Everything recorded for `site`. */
-  def entry[T <: Tuple, V](site: SiteDef[T, V]): TraceEntry[T, V] =
+  /** The value of `site` in this run. */
+  def apply[T <: Tuple, V](site: SiteDef[T, V]): Tensor[T, V] =
     bySite.get(site) match
-      case Some(e) => e.asInstanceOf[TraceEntry[T, V]]
+      case Some(e) => e.value.asInstanceOf[Tensor[T, V]]
       case None    =>
         throw java.util.NoSuchElementException(
           s"Site '${site.name}' is not in the trace. Sites: ${sites.map(_.name).mkString(", ")}"
         )
-
-  /** The value of `site` in this run. */
-  def apply[T <: Tuple, V](site: SiteDef[T, V]): Tensor[T, V] = entry(site).value
 
   override def toString: String =
     entries
