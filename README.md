@@ -103,7 +103,7 @@ with, and a starting point. Constraints are declared per site:
 val posterior = Latent.discover(Constraint(Sigma, Bijector.exp)):
   observe(Y := yData)(model(xData))
 
-val nuts = NUTSAlgorithm[posterior.Params](stepSize = 0.05)(posterior.logDensity)
+val nuts = NUTS(posterior, stepSize = 0.05)
 val draws = nuts.run(posterior.init, Key(3)).drop(500).take(2000).map(_._1).toList
 draws.map(_(Sigma))   // posterior draws of sigma, each a Sigma.Value (> 0)
 ```

@@ -16,7 +16,7 @@ trait LatentDim derives Label
   * val latent = Latent.discover(Constraint(Sigma, Bijector.exp)):
   *   observe(Y := yData)(model(x))
   *
-  * val nuts = NUTSAlgorithm[latent.Params](stepSize = 0.05)(latent.logDensity)
+  * val nuts = NUTS[latent.Params](stepSize = 0.05)(latent.logDensity)
   * val draws = nuts.run(latent.init, key).drop(500).take(2000).map(_._1).toList
   * draws.map(_(Sigma))   // List[Sigma.Value], always positive
   * }}}

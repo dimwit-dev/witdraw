@@ -3,7 +3,7 @@ package witdraw.examples.stan
 import dimwit.*
 import dimwit.stats.*
 import witdraw.*
-import witdraw.mcmc.NUTSAlgorithm
+import witdraw.inference.NUTS
 
 /** Univariate Gaussian mixture with `K` components, ported from the Stan
   * reference model:
@@ -216,7 +216,7 @@ object Mixture:
     )
 
     val nuts =
-      NUTSAlgorithm[posterior.Params](stepSize = 0.05)(posterior.logDensity)
+      NUTS(posterior, stepSize = 0.05)
     val (samples, infos) =
       nuts.run(start, Key(3L)).drop(500).take(1000).toList.unzip
     println(

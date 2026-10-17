@@ -4,8 +4,7 @@ package examples.rethinking
 import dimwit.*
 import dimwit.stats.*
 import witdraw.*
-import witdraw.mcmc.OptimizerKernel
-import witdraw.mcmc.NUTSAlgorithm
+import witdraw.inference.{Laplace, MAP, NUTS}
 
 import plotwit.PlotTargets.websocket
 import plotwit.{display, grid}
@@ -55,22 +54,10 @@ object WaterLandExample:
     val burnIn = 500
     val nSamples = 2000
 
-    val ok = OptimizerKernel.toSamplingAlgorithm(
-      optimizer = dimwit.optimizer.Adam(learningRate = -0.1f),
-      gradFn =
-        (params: latent.Params) => Autodiff.grad(latent.modelLogDensity)(params)
-    )
+    val map = MAP(latent, start = Seq(WaterProp := Tensor0(0.5f)))
+    println(f"MAP estimate: ${map(WaterProp).item}%.3f   (exact 6/9 = 0.667)")
 
-    val map = ok
-      .run(latent.initWith(WaterProp := Tensor0(0.5f)), Key(42))
-      .take(100)
-      .toList
-      .last
-      ._1
-
-    println(s"MAP estimate: ${map(WaterProp)}")
-
-    val nuts = NUTSAlgorithm[latent.Params](stepSize = 0.1)(latent.logDensity)
+    val nuts = NUTS(latent, stepSize = 0.1)
     val (nutsSamples, nutsInfos) = nuts
       .run(map, Key(42))
       .drop(burnIn)
@@ -84,10 +71,27 @@ object WaterLandExample:
       f"NUTS mean acceptance rate: ${nutsInfos.map(_.acceptanceRate).sum / nSamples}%.3f"
     )
 
-    val posteriorSamples = stack(nutsSamples.map(_(WaterProp)), Axis[Sample])
+    val laplace = Laplace(latent)
+    val laplaceSamples = laplace.run(map, Key(43)).take(nSamples).map(_._1).toList
+
+    // With a uniform prior and 6 waters in 9 tosses, the posterior is Beta(7, 4).
+    def summary(draws: List[latent.Params]): String =
+      val ps = draws.map(_(WaterProp).item)
+      val mean = ps.sum / ps.size
+      val sd = math.sqrt(ps.map(p => (p - mean) * (p - mean)).sum / ps.size)
+      f"mean $mean%.3f, sd $sd%.3f"
+    println(s"NUTS:    ${summary(nutsSamples)}   (exact Beta(7, 4): mean 0.636, sd 0.139)")
+    println(s"Laplace: ${summary(laplaceSamples)}")
+
+    def histogram(draws: List[latent.Params], title: String) =
+      histogramPlot(stack(draws.map(_(WaterProp)), Axis[Sample]), _.title := title)
     display(
-      histogramPlot(
-        posteriorSamples,
-        _.title := "Posterior distribution of water proportion"
+      grid(
+        List(
+          List(
+            histogram(nutsSamples, "Water proportion: NUTS"),
+            histogram(laplaceSamples, "Water proportion: Laplace")
+          )
+        )
       )
     )

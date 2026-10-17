@@ -14,7 +14,7 @@ import witdraw.Site
 import witdraw.observe
 import witdraw.Bijector
 import witling.DataFrame
-import witdraw.mcmc.NUTSAlgorithm
+import witdraw.inference.NUTS
 import plotwit.PlotTargets.websocket
 import plotwit.{display, grid}
 
@@ -130,7 +130,7 @@ object Chimpanzees:
     val burnIn = 2000
     val nSamples = 5000
     val nuts =
-      NUTSAlgorithm[posterior.Params](stepSize = 0.1)(posterior.logDensity)
+      NUTS(posterior, stepSize = 0.1)
     val (nutsSamples, nutsInfos) = nuts
       .run(posterior.init, Key(42))
       .drop(burnIn)

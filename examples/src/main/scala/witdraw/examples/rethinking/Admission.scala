@@ -16,7 +16,7 @@ import witdraw.distributions.LKJ
 import witdraw.Latent
 import witdraw.ProbProg
 import witdraw.observe
-import witdraw.mcmc.NUTSAlgorithm
+import witdraw.inference.NUTS
 import dimwit.jax.Jax
 import witling.updated
 import witling.Col
@@ -165,7 +165,7 @@ object AdmissionEx:
     val nSamples = 200
     println("starting sampling")
     val nuts =
-      NUTSAlgorithm[posterior.Params](stepSize = 0.1)(jit(posterior.logDensity))
+      NUTS(posterior, stepSize = 0.1)
     val (nutsSamples, nutsInfos) = nuts
       .run(posterior.init, Key(42))
       .drop(burnIn)

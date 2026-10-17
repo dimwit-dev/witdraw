@@ -5,7 +5,7 @@ import dimwit.stats.*
 import witdraw.*
 import witling.*
 import java.io.File
-import witdraw.mcmc.NUTSAlgorithm
+import witdraw.inference.NUTS
 import plotwit.plots.histogramPlot
 
 object OceanicExample:
@@ -125,7 +125,7 @@ object OceanicExample:
     val burnIn = 200
     val nSamples = 500
     val nuts =
-      NUTSAlgorithm[posterior.Params](stepSize = 0.01)(posterior.logDensity)
+      NUTS(posterior, stepSize = 0.01)
     val (nutsSamples, nutsInfos) = nuts
       .run(posterior.init, Key(42))
       .drop(burnIn)

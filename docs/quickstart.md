@@ -45,7 +45,7 @@ tensors and distributions, and WitDraw itself:
 import dimwit.*
 import dimwit.stats.*
 import witdraw.*
-import witdraw.mcmc.NUTSAlgorithm
+import witdraw.inference.NUTS
 ```
 
 Every program that uses dimwit must initialise the dimwit runtime first:
@@ -247,7 +247,7 @@ from its starting point.
 ```scala
 val burnIn = 500
 val nSamples = 2000
-val nuts = NUTSAlgorithm[latent.Params](stepSize = 0.05)(latent.logDensity)
+val nuts = NUTS(latent, stepSize = 0.05)
 val (samples, infos) = nuts
   .run(latent.init, nutsKey)
   .drop(burnIn)

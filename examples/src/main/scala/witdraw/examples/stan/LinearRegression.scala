@@ -31,8 +31,8 @@ object LinearRegression:
     (alpha = alpha, beta = beta, sigma = sigma, y = y)
 
   /** The latent sites of the model observed on `x` / `y`, with `sigma`
-    * positive. `latent.logDensity` is the joint log-density to hand to an MCMC
-    * kernel, and `latent.init` a starting point.
+    * positive, e.g. for `NUTS(latent, stepSize)` started at
+    * `latent.init`.
     */
   def latent(
       x: Tensor2[Data, Predictor, Float32],

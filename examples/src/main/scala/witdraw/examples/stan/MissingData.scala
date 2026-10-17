@@ -3,8 +3,8 @@ package witdraw.examples.stan
 import dimwit.*
 import dimwit.stats.*
 import witdraw.*
-import witdraw.mcmc.OptimizerKernel
-import witdraw.mcmc.NUTSAlgorithm
+import witdraw.inference.MAP
+import witdraw.inference.NUTS
 
 /** Bayesian linear regression with **missing predictor values**, ported from
   * the recipe in the Stan User's Guide chapter on missing data:
@@ -154,15 +154,10 @@ object MissingData:
     )(observed(xObs, yAll, nMissing))
     println(s"latent sites: ${latent.sites.map(_.name).mkString(", ")}")
 
-    // quick gradient ascent from the traced draw to a MAP-ish point, then
-    // NUTS from there
-    val ok = OptimizerKernel.toSamplingAlgorithm(
-      optimizer = dimwit.optimizer.Adam(learningRate = -0.05f),
-      gradFn = (p: latent.Params) => Autodiff.grad(latent.modelLogDensity)(p)
-    )
-    val start = ok.run(latent.init, Key(1L)).take(400).toList.last._1
+    // NUTS starts from the MAP
+    val start = MAP(latent, steps = 3000, learningRate = 0.1f)
 
-    val nuts = NUTSAlgorithm[latent.Params](stepSize = 0.02)(latent.logDensity)
+    val nuts = NUTS(latent, stepSize = 0.02)
     trait Sample derives Label
     val (samples, infos) = nuts
       .run(start, Key(2L))

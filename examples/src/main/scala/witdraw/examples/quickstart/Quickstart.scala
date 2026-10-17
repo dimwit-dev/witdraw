@@ -3,7 +3,7 @@ package witdraw.examples.quickstart
 import dimwit.*
 import dimwit.stats.*
 import witdraw.*
-import witdraw.mcmc.NUTSAlgorithm
+import witdraw.inference.NUTS
 
 object Quickstart:
 
@@ -74,7 +74,7 @@ object Quickstart:
 
     val burnIn = 500
     val nSamples = 5000
-    val nuts = NUTSAlgorithm[latent.Params](stepSize = 0.05)(latent.logDensity)
+    val nuts = NUTS(latent, stepSize = 0.05)
     val (samples, infos) = nuts
       .run(latent.init, nutsKey)
       .drop(burnIn)
