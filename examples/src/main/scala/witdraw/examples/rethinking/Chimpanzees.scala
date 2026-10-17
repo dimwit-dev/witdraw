@@ -12,7 +12,7 @@ import witdraw.Latent
 import witdraw.ProbContext
 import witdraw.Site
 import witdraw.observe
-import witdraw.reparam.Bijector
+import witdraw.Bijector
 import witling.DataFrame
 import witdraw.mcmc.NUTSAlgorithm
 import plotwit.PlotTargets.websocket

@@ -3,7 +3,6 @@ package witdraw
 import dimwit.*
 import dimwit.stats.*
 import scala.collection.mutable
-import witdraw.reparam.Bijector
 import dimwit.tensortree.TensorTree
 
 class ProbContextSuite extends munit.FunSuite:
@@ -193,8 +192,8 @@ class ProbContextSuite extends munit.FunSuite:
     )
 
   final lazy val mixture = Latent.discover(
-    Constraint(Weights, Bijector.simplexStickBreaking[CompZ, Comp](3)),
-    Constraint(Locs, Bijector.ordered[Comp](3))
+    Constraint(Weights, Bijector.simplexStickBreaking[CompZ, Comp]),
+    Constraint(Locs, Bijector.ordered[Comp])
   )(mixturePrior)
 
   test("a constraint may change the shape: simplex from K-1 coordinates"):

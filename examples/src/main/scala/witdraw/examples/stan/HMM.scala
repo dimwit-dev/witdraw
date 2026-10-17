@@ -4,7 +4,6 @@ import dimwit.*
 import dimwit.stats.*
 import witdraw.*
 import witdraw.mcmc.NUTSAlgorithm
-import witdraw.reparam.Bijector
 
 /** Three-state Hidden Markov Model with Gaussian emissions, ported from the
   * Stan reference model:
@@ -192,14 +191,14 @@ object HMM:
     * simplex.
     */
   def latent(y: Tensor1[Time, Float32]): Latent =
-    val simplex = Bijector.simplexStickBreaking[SimplexZ, State](nStates)
+    val simplex = Bijector.simplexStickBreaking[SimplexZ, State]
     Latent.discover(
       Constraint(Sigma, Bijector.exp),
       Constraint(Rho, simplex),
       Constraint(
         Gamma,
         Bijector.rowwise[State, SimplexZ, Prime[State]](
-          Bijector.simplexStickBreaking[SimplexZ, Prime[State]](nStates)
+          Bijector.simplexStickBreaking[SimplexZ, Prime[State]]
         )
       )
     )(observed(y))

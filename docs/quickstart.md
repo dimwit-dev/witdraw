@@ -46,7 +46,6 @@ import dimwit.*
 import dimwit.stats.*
 import witdraw.*
 import witdraw.mcmc.NUTSAlgorithm
-import witdraw.reparam.Bijector
 ```
 
 Every program that uses dimwit must initialise the dimwit runtime first:

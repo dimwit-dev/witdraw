@@ -1,49 +1,33 @@
-package witdraw.reparam
+package witdraw
 
 import dimwit.*
 import dimwit.tensor.Labels
 
-/** A differentiable bijection `Z <-> X` with a tractable log-det-Jacobian.
+/** A differentiable bijection between an unconstrained value `z` and a value
+  * `x` in a constrained space, with the log-determinant of its Jacobian.
+  * [[Constraint]] attaches one to a site.
   *
-  * A *constraining transform* (this file's factories) is the fixed,
-  * zero-parameter case: `Z` is an unconstrained ℝ-valued tensor and `X` lives
-  * in some constrained support. A *normalizing flow* is the same interface with
-  * learnable parameters and many layers composed via [[andThen]].
-  *
-  * Convention: we sample in `Z`-space, so the pushed-forward target density is
-  * `p_X(forward(z)) * |det J_forward(z)|`, i.e.
-  * `logDensity(forward(z)) + logDetJac(z)` — see `Latent.logDensity`, which
-  * applies bijectors to latent sites given as [[witdraw.Constraint]]s.
+  * Inference moves in `z`, so the density of `z` is
+  * `logDensity(forward(z)) + logDetJac(z)`, see [[Latent.logDensity]].
   */
 trait Bijector[Z, X]:
-
-  /** unconstrained/base value -> value in the constrained support */
+  /** The unconstrained value `z` to the constrained value `x`. */
   def forward(z: Z): X
 
-  /** constrained value -> unconstrained/base value */
+  /** The constrained value `x` to the unconstrained value `z`. */
   def inverse(x: X): Z
 
-  /** `log |det ∂forward/∂z|` evaluated at `z`, as a scalar. */
+  /** `log |det ∂forward/∂z|` at `z`. */
   def logDetJac(z: Z): Tensor0[Float32]
-
-  /** Compose: `this` then `that`. Jacobians add along the chain. */
-  infix def andThen[Y](that: Bijector[X, Y]): Bijector[Z, Y] =
-    val self = this
-    new Bijector[Z, Y]:
-      def forward(z: Z): Y = that.forward(self.forward(z))
-      def inverse(y: Y): Z = self.inverse(that.inverse(y))
-      def logDetJac(z: Z): Tensor0[Float32] =
-        self.logDetJac(z) + that.logDetJac(self.forward(z))
 
 object Bijector:
 
-  /** `x = z` (an unconstrained real parameter). */
-  def identity[T <: Tuple: Labels]
-      : Bijector[Tensor[T, Float32], Tensor[T, Float32]] =
-    new Bijector[Tensor[T, Float32], Tensor[T, Float32]]:
-      def forward(z: Tensor[T, Float32]) = z
-      def inverse(x: Tensor[T, Float32]) = x
-      def logDetJac(z: Tensor[T, Float32]) = Tensor0(0f)
+  /** `x = z`: no constraint. */
+  def identity[T <: Tuple, V]: Bijector[Tensor[T, V], Tensor[T, V]] =
+    new Bijector[Tensor[T, V], Tensor[T, V]]:
+      def forward(z: Tensor[T, V]) = z
+      def inverse(x: Tensor[T, V]) = x
+      def logDetJac(z: Tensor[T, V]) = Tensor0(0f)
 
   /** `x = exp(z)`, so `x > 0` — Stan's `<lower=0>`. */
   def exp[T <: Tuple: Labels]
@@ -52,16 +36,6 @@ object Bijector:
       def forward(z: Tensor[T, Float32]) = z.exp
       def inverse(x: Tensor[T, Float32]) = x.log
       def logDetJac(z: Tensor[T, Float32]) = z.sum // ∑ log e^{z_i} = ∑ z_i
-
-  /** `x = shift + scale ⊙ z` (element-wise; `scale > 0`). */
-  def affine[T <: Tuple: Labels](
-      shift: Tensor[T, Float32],
-      scale: Tensor[T, Float32]
-  ): Bijector[Tensor[T, Float32], Tensor[T, Float32]] =
-    new Bijector[Tensor[T, Float32], Tensor[T, Float32]]:
-      def forward(z: Tensor[T, Float32]) = shift + scale * z
-      def inverse(x: Tensor[T, Float32]) = (x - shift) / scale
-      def logDetJac(z: Tensor[T, Float32]) = scale.log.sum
 
   /** `x = lo + (hi - lo)·σ(z)`, so `x ∈ (lo, hi)` element-wise — Stan's
     * `<lower=a, upper=b>`. `lo`/`hi` are full tensors (broadcast yourself for
@@ -82,70 +56,55 @@ object Bijector:
         val s = Tensor.sigmoid(z)
         (width.log + (s * -(s -! Tensor0(1f))).log).sum // ∑ log[width·σ(1-σ)]
 
-  /** Strictly increasing along `axis` — Stan's `ordered[k]`. `x_0 = z_0`,
-    * `x_j = x_{j-1} + exp(z_j)`, i.e. `x = cumsum([z_0, exp(z_1), …,
-    * exp(z_{k-1})])`.
+  /** Strictly increasing along the axis `L` — Stan's `ordered[k]`.
+    * `x_0 = z_0`, `x_j = x_{j-1} + exp(z_j)`, i.e. `x = cumsum([z_0, exp(z_1),
+    * …, exp(z_{k-1})])`.
     */
-  def ordered[L: Label](
-      k: Int
-  ): Bijector[Tensor1[L, Float32], Tensor1[L, Float32]] =
+  def ordered[L: Label]: Bijector[Tensor1[L, Float32], Tensor1[L, Float32]] =
     val axis = Axis[L]
     new Bijector[Tensor1[L, Float32], Tensor1[L, Float32]]:
       def forward(z: Tensor1[L, Float32]) =
+        val k = z.shape(axis)
         if k <= 1 then z
         else
           val incrs = concatenate(
             Seq(z.slice(axis.at(0 until 1)), z.slice(axis.at(1 until k)).exp),
             axis
           )
-          cumsum(incrs, axis)
+          incrs.cumsum(axis)
       def inverse(x: Tensor1[L, Float32]) =
+        val k = x.shape(axis)
         if k <= 1 then x
         else
           val gaps =
             x.slice(axis.at(1 until k)) - x.slice(axis.at(0 until k - 1))
           concatenate(Seq(x.slice(axis.at(0 until 1)), gaps.log), axis)
       def logDetJac(z: Tensor1[L, Float32]) =
+        val k = z.shape(axis)
         if k <= 1 then Tensor0(0f)
         else z.slice(axis.at(1 until k)).sum // ∑_{j≥1} z_j
-
-  /** Cumulative sum of a vector along `axis`. Replace with dimwit's
-    * `t.cumsum(axis)` once published (branch `more_elementary_jax_methods`);
-    * here as a lower-triangular ones matmul so nothing else has to change.
-    */
-  private def cumsum[L: Label](
-      v: Tensor1[L, Float32],
-      axis: Axis[L]
-  ): Tensor1[L, Float32] =
-    val k = v.shape(axis)
-    val tri = Tensor2(axis -> k, Axis[Prime[L]] -> k)
-      .fromArray(
-        Array.tabulate(k * k)(idx => if idx % k <= idx / k then 1f else 0f)
-      )
-    tri.dot(Axis[Prime[L]])(v.relabelTo(Axis[Prime[L]]))
 
   /** Stick-breaking simplex map — Stan's `simplex[k]`. `Z` is `k-1`
     * unconstrained reals (`LZ` axis), `X` is a `k`-vector on the simplex (`LC`
     * axis).
     */
-  def simplexStickBreaking[LZ: Label, LC: Label](
-      k: Int
-  ): Bijector[Tensor1[LZ, Float32], Tensor1[LC, Float32]] =
+  def simplexStickBreaking[LZ: Label, LC: Label]
+      : Bijector[Tensor1[LZ, Float32], Tensor1[LC, Float32]] =
     val zAxis = Axis[LZ]
     val cAxis = Axis[LC]
-    def offset(i: Int): Tensor0[Float32] =
-      Tensor0(
-        math.log(1.0 / (k - 1 - i)).toFloat
-      ) // logit shift -> uniform default
+    // logit shift, so that z = 0 gives the uniform simplex
+    def offset(k: Int, i: Int): Tensor0[Float32] =
+      Tensor0(math.log(1.0 / (k - 1 - i)).toFloat)
 
     new Bijector[Tensor1[LZ, Float32], Tensor1[LC, Float32]]:
       def forward(z: Tensor1[LZ, Float32]) =
+        val k = z.shape(zAxis) + 1
         val xs = scala.collection.mutable.ArrayBuffer[Tensor0[Float32]]()
         var remaining = Tensor0(1f)
         var i = 0
         while i < k - 1 do
           val zeta =
-            Tensor.sigmoid(z.slice(zAxis.at(i)) + offset(i))
+            Tensor.sigmoid(z.slice(zAxis.at(i)) + offset(k, i))
           val xi = remaining * zeta
           xs += xi
           remaining = remaining - xi
@@ -154,26 +113,26 @@ object Bijector:
         stack(xs.toSeq, cAxis)
 
       def inverse(x: Tensor1[LC, Float32]) =
+        val k = x.shape(cAxis)
         val zs = scala.collection.mutable.ArrayBuffer[Tensor0[Float32]]()
         var remaining = Tensor0(1f)
         var i = 0
         while i < k - 1 do
           val xi = x.slice(cAxis.at(i))
           val zeta = xi / remaining
-          zs += (zeta / (Tensor0(1f) - zeta)).log - offset(
-            i
-          ) // logit(zeta) - shift
+          zs += (zeta / (Tensor0(1f) - zeta)).log - offset(k, i) // logit(zeta) - shift
           remaining = remaining - xi
           i += 1
         stack(zs.toSeq, zAxis)
 
       def logDetJac(z: Tensor1[LZ, Float32]) =
+        val k = z.shape(zAxis) + 1
         var acc = Tensor0(0f)
         var remaining = Tensor0(1f)
         var i = 0
         while i < k - 1 do
           val zeta =
-            Tensor.sigmoid(z.slice(zAxis.at(i)) + offset(i))
+            Tensor.sigmoid(z.slice(zAxis.at(i)) + offset(k, i))
           // ∑ [ log ζ_i + log(1-ζ_i) + log(stick remaining before i) ]
           acc = acc + (zeta * (Tensor0(1f) - zeta)).log + remaining.log
           remaining = remaining - remaining * zeta

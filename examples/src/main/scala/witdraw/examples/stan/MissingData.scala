@@ -5,7 +5,6 @@ import dimwit.stats.*
 import witdraw.*
 import witdraw.mcmc.OptimizerKernel
 import witdraw.mcmc.NUTSAlgorithm
-import witdraw.reparam.Bijector
 
 /** Bayesian linear regression with **missing predictor values**, ported from
   * the recipe in the Stan User's Guide chapter on missing data:

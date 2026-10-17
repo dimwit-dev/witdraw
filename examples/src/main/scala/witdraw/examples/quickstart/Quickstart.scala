@@ -4,7 +4,6 @@ import dimwit.*
 import dimwit.stats.*
 import witdraw.*
 import witdraw.mcmc.NUTSAlgorithm
-import witdraw.reparam.Bijector
 
 object Quickstart:
 

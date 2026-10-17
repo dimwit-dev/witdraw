@@ -6,7 +6,6 @@ import witdraw.*
 import witling.*
 import java.io.File
 import witdraw.mcmc.NUTSAlgorithm
-import witdraw.reparam.Bijector
 import plotwit.plots.histogramPlot
 
 object OceanicExample:

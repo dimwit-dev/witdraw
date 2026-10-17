@@ -3,7 +3,6 @@ package witdraw.examples.stan
 import dimwit.*
 import dimwit.stats.*
 import witdraw.*
-import witdraw.reparam.Bijector
 
 object LinearRegression:
 

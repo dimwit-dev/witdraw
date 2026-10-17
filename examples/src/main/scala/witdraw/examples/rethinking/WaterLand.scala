@@ -6,7 +6,6 @@ import dimwit.stats.*
 import witdraw.*
 import witdraw.mcmc.OptimizerKernel
 import witdraw.mcmc.NUTSAlgorithm
-import witdraw.reparam.Bijector
 
 import plotwit.PlotTargets.websocket
 import plotwit.{display, grid}

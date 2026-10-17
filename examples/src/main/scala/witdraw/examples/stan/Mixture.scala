@@ -4,7 +4,6 @@ import dimwit.*
 import dimwit.stats.*
 import witdraw.*
 import witdraw.mcmc.NUTSAlgorithm
-import witdraw.reparam.Bijector
 
 /** Univariate Gaussian mixture with `K` components, ported from the Stan
   * reference model:
@@ -160,8 +159,8 @@ object Mixture:
     */
   def latent(y: Tensor1[Data, Float32], k: Int): Latent =
     Latent.discover(
-      Constraint(Theta, Bijector.simplexStickBreaking[ThetaZ, Comp](k)),
-      Constraint(Mu, Bijector.ordered[Comp](k)),
+      Constraint(Theta, Bijector.simplexStickBreaking[ThetaZ, Comp]),
+      Constraint(Mu, Bijector.ordered[Comp]),
       Constraint(Sigma, Bijector.exp)
     )(observed(y, k))
 
