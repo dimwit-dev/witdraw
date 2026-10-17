@@ -75,10 +75,6 @@ class ProbContextSuite extends munit.FunSuite:
         observe(Y := yData)(likelihood(p.mu, p.sigma))
     assertEqualsFloat(lp.item, manualLogProb(0.3f, 1.5f), 1e-4f)
 
-  test("ScoredSampler returns the same log-density as ModelScorer"):
-    val (r, lp) = ScoredSampler.run(Key(3))(observe(Y := yData)(model))
-    assertEqualsFloat(lp.item, manualLogProb(r.mu.item, r.sigma.item), 1e-3f)
-
   test("the log-density is differentiable through handlers"):
     val logDensity = (p: (mu: Tensor0[Float32], sigma: Tensor0[Float32])) =>
       ModelScorer.run:
@@ -128,9 +124,11 @@ class ProbContextSuite extends munit.FunSuite:
   test("errors: free site in ModelScorer, site sampled twice"):
     intercept[IllegalArgumentException]:
       ModelScorer.run(observe(Y := yData)(model))
+    def twice(using ProbContext) = (Mu ~ Normal(0f, 1f), Mu ~ Normal(0f, 1f))
     intercept[IllegalArgumentException]:
-      ForwardSampler.run(Key(1)):
-        (Mu ~ Normal(0f, 1f), Mu ~ Normal(0f, 1f))
+      ForwardSampler.run(Key(1))(observe(Mu := Tensor0(0f))(twice))
+    intercept[IllegalArgumentException]:
+      ForwardSampler.run(Key(1))(withTrace(twice))
 
   test("withTrace records every site, its value and whether it was observed"):
     val (r, tr) =

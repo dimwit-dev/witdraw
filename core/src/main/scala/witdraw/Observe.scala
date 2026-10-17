@@ -14,7 +14,8 @@ import scala.collection.mutable
   * }}}
   *
   * Observing a site that the model never samples is an error, as is observing a
-  * site that a handler further in has already observed.
+  * site that a handler further in has already observed, or a model that samples
+  * a site more than once.
   */
 def observe[A](observations: Observation[?, ?]*)(model: ProbProg[A])(using
     outer: ProbContext
@@ -48,7 +49,7 @@ private class Observer(
   def sample[T <: Tuple, V](
       statement: SampleStatement[T, V]
   ): Tensor[T, V] =
-    sampled += statement.site
+    if !sampled.add(statement.site) then throw sampledTwice(statement.site)
     valueOf(statement.site) match
       case None        => outer.sample(statement)
       case Some(value) =>
@@ -59,6 +60,14 @@ private class Observer(
         outer.sample(
           statement.copy(observed = Some(value.asInstanceOf[Tensor[T, V]]))
         )
+
+/** The error for a model that samples `site` more than once, which makes
+  * observing or tracing that site ambiguous.
+  */
+private[witdraw] def sampledTwice(site: SiteDef[?, ?]): IllegalArgumentException =
+  IllegalArgumentException(
+    s"Site '${site.name}' is sampled more than once. Each site may appear only once in a model."
+  )
 
 private def quoted(names: Iterable[String]): String =
   names.map(n => s"'$n'").mkString(", ")

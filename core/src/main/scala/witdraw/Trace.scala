@@ -54,6 +54,8 @@ final class Trace(val entries: Seq[TraceEntry[?, ?]]):
   * distribution, value and whether it was observed. Returns the model's result
   * and the [[Trace]].
   *
+  * A model that samples a site more than once is an error.
+  *
   * Like every handler, `withTrace` sees the statements of its block after the
   * handlers further in have changed them, so put it around `observe` to record
   * which sites are observed:
@@ -64,14 +66,16 @@ final class Trace(val entries: Seq[TraceEntry[?, ?]]):
   * }}}
   */
 def withTrace[A](model: ProbProg[A])(using outer: ProbContext): (A, Trace) =
-  val entries = mutable.ArrayBuffer.empty[TraceEntry[?, ?]]
+  val entries = mutable.LinkedHashMap.empty[SiteDef[?, ?], TraceEntry[?, ?]]
   val result = model(using
     new ProbContext:
       def sample[T <: Tuple, V](
           statement: SampleStatement[T, V]
       ): Tensor[T, V] =
+        if entries.contains(statement.site) then
+          throw sampledTwice(statement.site)
         val value = outer.sample(statement)
-        entries += TraceEntry(
+        entries(statement.site) = TraceEntry(
           statement.site,
           statement.distribution,
           value,
@@ -79,4 +83,4 @@ def withTrace[A](model: ProbProg[A])(using outer: ProbContext): (A, Trace) =
         )
         value
   )
-  (result, Trace(entries.toSeq))
+  (result, Trace(entries.values.toSeq))
