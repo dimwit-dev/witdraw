@@ -166,9 +166,7 @@ priorPredictive.foreach { s =>
 The spread of these draws shows how vague our priors are.
 
 The handler `observe` runs a block of code with some sites fixed to given
-values. Here we fix the noise scale to 1 and let everything else vary. `Sigma` comes *before* the other variables in the
-model and nothing depends on it except `y`, so in a forward sampler this
-simply sets its value; the other draws are unaffected:
+values. Here we fix the noise scale to 1 and let everything else vary:
 
 ```scala
 val withFixedSigma = fixedKey.split(5).map { k =>
@@ -195,10 +193,11 @@ Now we condition on the observed outcomes and ask which parameter values are
 plausible. The model observed on the data has three *latent* sites left,
 `Alpha`, `Beta` and `Sigma`: the parameters whose posterior we want.
 
-Most inference algorithms in WitDraw need the (unnormalised) log-density of
-the posterior as a function of these parameters. `Latent.discover` builds it
-for us. It runs the observed model forward once, records every site with the
-`withTrace` handler, and collects the sites that are not observed:
+The inference methods in WitDraw work on a `Latent`: the latent sites, a
+parameter type for them, and the posterior's log-density as a function of
+that type. `Latent.discover` builds it. It runs the observed model forward
+once, records every site with the `withTrace` handler, and collects the sites
+that are not observed:
 
 ```scala
 val latent = Latent.discover(Constraint(Sigma, Bijector.exp)):
@@ -296,6 +295,11 @@ val meanAcceptance = infos.map(_.acceptanceRate).sum / infos.size
 // meanAcceptance: Double = 0.920905446305871
 ```
 
+NUTS is not the only inference method: `MAP(latent)` finds the posterior mode,
+and `Laplace(latent)` approximates the posterior by a Gaussian around its mode
+and is run like NUTS. Both are in `witdraw.inference` and take the same
+`latent`.
+
 ## Composing models
 
 `model` above tells the whole story in one method. As models grow, it helps
@@ -389,6 +393,7 @@ Two things to keep in mind when composing:
 - A part that samples sites needs a `ProbContext`, so it can only be called
   from a model, a handler or an interpreter. Calling it anywhere else is a
   compile error.
-- A site is identified by its object, and each site may be sampled only once
-  per run; sampling it twice is an error. Two different objects are different
-  sites, even if they share a name.
+- A site is identified by its object: two different objects are different
+  sites, even if they share a name. Each site may be sampled only once per
+  run when it is observed, traced or inferred; there, sampling it twice is an
+  error.

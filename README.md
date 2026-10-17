@@ -46,6 +46,7 @@ together with its shape:
 import dimwit.*
 import dimwit.stats.*
 import witdraw.*
+import witdraw.inference.NUTS
 
 trait Sample derives Label   // one entry per observation
 trait Feature derives Label  // one entry per feature, i.e. per regression weight
@@ -96,8 +97,10 @@ val withKnownSigma = ForwardSampler.run(Key(1)):
 
 For inference, `Latent.discover` traces one run of the observed model and
 finds its latent sites, here `alpha`, `beta` and `sigma`. It gives a parameter
-type for them, the unnormalised log posterior that samplers such as NUTS work
-with, and a starting point. Constraints are declared per site:
+type for them and a starting point, and the inference methods in
+`witdraw.inference` work on it directly: `NUTS` samples the posterior, `MAP`
+finds its mode, and `Laplace` approximates it by a Gaussian. Constraints are
+declared per site:
 
 ```scala
 val posterior = Latent.discover(Constraint(Sigma, Bijector.exp)):
