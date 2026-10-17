@@ -31,9 +31,9 @@ object Quickstart:
   def runQuickstart(): Unit =
     dimwit.initialize()
 
-    val (dataKey, noiseKey, priorKey, fixedKey, traceKey, nutsKey) =
-      val ks = Key(42).split(6)
-      (ks(0), ks(1), ks(2), ks(3), ks(4), ks(5))
+    val (dataKey, noiseKey, priorKey, fixedKey, nutsKey) =
+      val ks = Key(42).split(5)
+      (ks(0), ks(1), ks(2), ks(3), ks(4))
 
     val sampleExtent = Axis[Sample] -> 100
     val featureExtent = Axis[Feature] -> 2
@@ -69,7 +69,7 @@ object Quickstart:
       println(f"sigma=${s.sigma.item}%4.2f  mean(y)=${s.y.mean.item}%8.2f")
     }
 
-    val latent = Latent.discover(traceKey, Constraint(Sigma, Bijector.exp)):
+    val latent = Latent.discover(Constraint(Sigma, Bijector.exp)):
       observe(Y := yData):
         model(xData)
 

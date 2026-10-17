@@ -117,9 +117,9 @@ dimwit uses explicit random keys (as in JAX). We split one root key into
 independent keys, one for each use, so that no key is used twice:
 
 ```scala
-val (dataKey, noiseKey, priorKey, fixedKey, traceKey, nutsKey) =
-  val ks = Key(42).split(6)
-  (ks(0), ks(1), ks(2), ks(3), ks(4), ks(5))
+val (dataKey, noiseKey, priorKey, fixedKey, nutsKey) =
+  val ks = Key(42).split(5)
+  (ks(0), ks(1), ks(2), ks(3), ks(4))
 
 val sampleExtent = Axis[Sample] -> 100
 val featureExtent = Axis[Feature] -> 2
@@ -202,7 +202,7 @@ for us. It runs the observed model forward once, records every site with the
 `withTrace` handler, and collects the sites that are not observed:
 
 ```scala
-val latent = Latent.discover(traceKey, Constraint(Sigma, Bijector.exp)):
+val latent = Latent.discover(Constraint(Sigma, Bijector.exp)):
   observe(Y := yData):
     model(xData)
 ```
@@ -276,11 +276,11 @@ val (sigmaMean, sigmaSd) = summary(samples.map(_(Sigma)))
 
 ```scala
 println(s"alpha: mean $alphaMean, sd $alphaSd   (true $alphaTrue)")
-// alpha: mean 0.40265706, sd 0.06848177   (true 0.5)
+// alpha: mean 0.40087232, sd 0.069597654   (true 0.5)
 println(s"beta:  mean $betaMean, sd $betaSd   (true $betaTrue)")
-// beta:  mean [-1.4136965  2.0441742], sd [0.07268124 0.0698493 ]   (true [-1.5  2. ])
+// beta:  mean [-1.4122269  2.0413063], sd [0.07261302 0.06949434]   (true [-1.5  2. ])
 println(s"sigma: mean $sigmaMean, sd $sigmaSd   (true $sigmaTrue)")
-// sigma: mean 0.6912305, sd 0.04927708   (true 0.8)
+// sigma: mean 0.69023913, sd 0.05033151   (true 0.8)
 ```
 
 The true values lie within roughly two posterior standard deviations of the
@@ -294,7 +294,7 @@ run has no divergent transitions and a reasonably high acceptance rate:
 val divergences = infos.count(_.isDivergent)
 // divergences: Int = 0
 val meanAcceptance = infos.map(_.acceptanceRate).sum / infos.size
-// meanAcceptance: Double = 0.9193088953047991
+// meanAcceptance: Double = 0.920905446305871
 ```
 
 ## Composing models

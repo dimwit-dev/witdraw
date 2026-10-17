@@ -123,7 +123,7 @@ object Chimpanzees:
 
     // The between-chimp spread is a scale, so it is sampled on the log scale.
     val posterior =
-      Latent.discover(Key(1), Constraint(ChimpVariability, Bijector.exp)):
+      Latent.discover(Constraint(ChimpVariability, Bijector.exp)):
         observe(PulledLeft := pulledLeft)(model)
     println(s"latent sites: ${posterior.sites.map(_.name).mkString(", ")}")
 

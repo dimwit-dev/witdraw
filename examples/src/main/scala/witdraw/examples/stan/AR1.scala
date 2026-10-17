@@ -65,8 +65,8 @@ object AR1:
     observe(Y := y)(model(y.shape(Axis[Time])))
 
   /** The latent sites of the model observed on `y`, with `sigma` positive. */
-  def latent(y: Tensor1[Time, Float32], key: Key): Latent =
-    Latent.discover(key, Constraint(Sigma, Bijector.exp))(observed(y))
+  def latent(y: Tensor1[Time, Float32]): Latent =
+    Latent.discover(Constraint(Sigma, Bijector.exp))(observed(y))
 
   // -- Generative helpers -------------------------------------------------
 
@@ -122,7 +122,7 @@ object AR1:
     val observedPath = simulate(params, n, Tensor0(15f))(Key(99L))
 
     // Show the inference entry point runs on that "observed" series.
-    val posterior = latent(observedPath, Key(2L))
+    val posterior = latent(observedPath)
     val atTruth = posterior.initWith(
       Alpha := params.alpha,
       Beta := params.beta,

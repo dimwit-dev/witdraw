@@ -191,10 +191,9 @@ object HMM:
     * Stan model: `sigma` positive, `rho` and every row of `gamma` on the
     * simplex.
     */
-  def latent(y: Tensor1[Time, Float32], key: Key): Latent =
+  def latent(y: Tensor1[Time, Float32]): Latent =
     val simplex = Bijector.simplexStickBreaking[SimplexZ, State](nStates)
     Latent.discover(
-      key,
       Constraint(Sigma, Bijector.exp),
       Constraint(Rho, simplex),
       Constraint(
@@ -242,7 +241,7 @@ object HMM:
 
     val y = simulate(params, n = 60)(Key(1L))
 
-    val posterior = latent(y, Key(2L))
+    val posterior = latent(y)
     println(s"latent sites: ${posterior.sites.map(_.name).mkString(", ")}")
 
     val atTruth = posterior.initWith(

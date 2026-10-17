@@ -158,7 +158,7 @@ object AdmissionEx:
     // intercepts and slopes are slices of DeptAB. R is a correlation matrix,
     // which would need a correlation (Cholesky) bijector; it is sampled
     // unconstrained for now.
-    val posterior = Latent.discover(Key(1)):
+    val posterior = Latent.discover():
       observe(Admission := admission)(model)
     println(s"latent sites: ${posterior.sites.map(_.name).mkString(", ")}")
     val burnIn = 200

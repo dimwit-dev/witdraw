@@ -117,9 +117,9 @@ dimwit uses explicit random keys (as in JAX). We split one root key into
 independent keys, one for each use, so that no key is used twice:
 
 ```scala mdoc:silent
-val (dataKey, noiseKey, priorKey, fixedKey, traceKey, nutsKey) =
-  val ks = Key(42).split(6)
-  (ks(0), ks(1), ks(2), ks(3), ks(4), ks(5))
+val (dataKey, noiseKey, priorKey, fixedKey, nutsKey) =
+  val ks = Key(42).split(5)
+  (ks(0), ks(1), ks(2), ks(3), ks(4))
 
 val sampleExtent = Axis[Sample] -> 100
 val featureExtent = Axis[Feature] -> 2
@@ -192,7 +192,7 @@ for us. It runs the observed model forward once, records every site with the
 `withTrace` handler, and collects the sites that are not observed:
 
 ```scala mdoc:silent
-val latent = Latent.discover(traceKey, Constraint(Sigma, Bijector.exp)):
+val latent = Latent.discover(Constraint(Sigma, Bijector.exp)):
   observe(Y := yData):
     model(xData)
 ```

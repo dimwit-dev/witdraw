@@ -158,9 +158,8 @@ object Mixture:
     * Stan model: `theta` on the simplex (by stick-breaking, from `K-1`
     * unconstrained coordinates), `mu` ordered and `sigma` positive.
     */
-  def latent(y: Tensor1[Data, Float32], k: Int, key: Key): Latent =
+  def latent(y: Tensor1[Data, Float32], k: Int): Latent =
     Latent.discover(
-      key,
       Constraint(Theta, Bijector.simplexStickBreaking[ThetaZ, Comp](k)),
       Constraint(Mu, Bijector.ordered[Comp](k)),
       Constraint(Sigma, Bijector.exp)
@@ -199,7 +198,7 @@ object Mixture:
 
     val y = simulate(params, n = 80)(Key(1L))
 
-    val posterior = latent(y, k = 2, Key(2L))
+    val posterior = latent(y, k = 2)
     println(s"latent sites: ${posterior.sites.map(_.name).mkString(", ")}")
 
     val atTruth = posterior.initWith(

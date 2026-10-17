@@ -37,8 +37,7 @@ object LinearRegression:
     */
   def latent(
       x: Tensor2[Data, Predictor, Float32],
-      y: Tensor1[Data, Float32],
-      key: Key
+      y: Tensor1[Data, Float32]
   ): Latent =
-    Latent.discover(key, Constraint(Sigma, Bijector.exp)):
+    Latent.discover(Constraint(Sigma, Bijector.exp)):
       observe(Y := y)(model(x))

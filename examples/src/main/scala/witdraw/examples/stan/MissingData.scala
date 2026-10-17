@@ -150,7 +150,6 @@ object MissingData:
     // xMis) are found by tracing one run of the observed model. The two
     // scales are sampled on the log scale, so they stay positive.
     val latent = Latent.discover(
-      Key(3L),
       Constraint(Sigma, Bijector.exp),
       Constraint(SigmaX, Bijector.exp)
     )(observed(xObs, yAll, nMissing))

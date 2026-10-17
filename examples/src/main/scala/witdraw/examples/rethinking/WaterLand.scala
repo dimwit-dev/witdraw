@@ -49,7 +49,6 @@ object WaterLandExample:
     // The latent sites are found by tracing one run of the conditioned
     // model. WaterProp is a proportion, so it is sampled on the logit scale.
     val latent = Latent.discover(
-      Key(0),
       Constraint(WaterProp, Bijector.interval(Tensor0(0f), Tensor0(1f)))
     )(conditioned)
     println(s"Latent sites: ${latent.sites.map(_.name).mkString(", ")}")

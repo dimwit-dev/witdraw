@@ -100,7 +100,7 @@ type for them, the unnormalised log posterior that samplers such as NUTS work
 with, and a starting point. Constraints are declared per site:
 
 ```scala
-val posterior = Latent.discover(Key(2), Constraint(Sigma, Bijector.exp)):
+val posterior = Latent.discover(Constraint(Sigma, Bijector.exp)):
   observe(Y := yData)(model(xData))
 
 val nuts = NUTSAlgorithm[posterior.Params](stepSize = 0.05)(posterior.logDensity)
