@@ -37,3 +37,11 @@ case class SampleStatement[T <: Tuple, V](
     distribution: Distribution[T, V],
     observed: Option[Tensor[T, V]]
 )
+
+/** The error for a model that samples `site` more than once, which makes
+  * observing or tracing that site ambiguous.
+  */
+private[witdraw] def sampledTwice(site: SiteDef[?, ?]): IllegalArgumentException =
+  IllegalArgumentException(
+    s"Site '${site.name}' is sampled more than once. Each site may appear only once in a model."
+  )

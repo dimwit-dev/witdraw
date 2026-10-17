@@ -13,61 +13,41 @@ import scala.collection.mutable
   *     model(x)
   * }}}
   *
-  * Observing a site that the model never samples is an error, as is observing a
-  * site that a handler further in has already observed, or a model that samples
-  * a site more than once.
+  * It is an error to observe a site twice, to observe a site the model never
+  * samples, or to run a model that samples a site more than once.
   */
 def observe[A](observations: Observation[?, ?]*)(model: ProbProg[A])(using
     outer: ProbContext
 ): A =
-  val bySite: Map[SiteDef[?, ?], Any] =
+  for (site, obs) <- observations.groupBy(_.site) if obs.size > 1 do
+    throw IllegalArgumentException(
+      s"Site '${site.name}' is observed more than once in the same observe."
+    )
+  val valueOf: Map[SiteDef[?, ?], Any] =
     observations.map(o => o.site -> o.value).toMap
-  require(
-    bySite.size == observations.size,
-    s"A site is observed more than once in the same observe: ${observations.map(_.site.name).mkString(", ")}"
-  )
-  val observer = Observer(outer, bySite.get)
-  val result = model(using observer)
-  val unmatched = bySite.keySet -- observer.sampled
-  require(
-    unmatched.isEmpty,
-    s"Observed ${quoted(unmatched.map(_.name))}, but the model has no such site. " +
-      s"Sites in the model: ${observer.sampled.map(_.name).mkString(", ")}."
-  )
-  result
-
-/** The context behind [[observe]]: fixes every site for which `valueOf` has a
-  * value, records which sites the model sampled, and passes every statement on
-  * to `outer`.
-  */
-private class Observer(
-    outer: ProbContext,
-    valueOf: SiteDef[?, ?] => Option[Any]
-) extends ProbContext:
   val sampled = mutable.LinkedHashSet.empty[SiteDef[?, ?]]
 
-  def sample[T <: Tuple, V](
-      statement: SampleStatement[T, V]
-  ): Tensor[T, V] =
-    if !sampled.add(statement.site) then throw sampledTwice(statement.site)
-    valueOf(statement.site) match
-      case None        => outer.sample(statement)
-      case Some(value) =>
-        require(
-          statement.observed.isEmpty,
-          s"Site '${statement.site.name}' is observed twice."
-        )
-        outer.sample(
-          statement.copy(observed = Some(value.asInstanceOf[Tensor[T, V]]))
-        )
-
-/** The error for a model that samples `site` more than once, which makes
-  * observing or tracing that site ambiguous.
-  */
-private[witdraw] def sampledTwice(site: SiteDef[?, ?]): IllegalArgumentException =
-  IllegalArgumentException(
-    s"Site '${site.name}' is sampled more than once. Each site may appear only once in a model."
+  val result = model(using
+    new ProbContext:
+      def sample[T <: Tuple, V](
+          statement: SampleStatement[T, V]
+      ): Tensor[T, V] =
+        val site = statement.site
+        if !sampled.add(site) then throw sampledTwice(site)
+        valueOf.get(site) match
+          case None        => outer.sample(statement)
+          case Some(value) =>
+            if statement.observed.isDefined then
+              throw IllegalArgumentException(
+                s"Site '${site.name}' is observed twice, by nested observe blocks."
+              )
+            val observed = value.asInstanceOf[Tensor[T, V]]
+            outer.sample(statement.copy(observed = Some(observed)))
   )
 
-private def quoted(names: Iterable[String]): String =
-  names.map(n => s"'$n'").mkString(", ")
+  for site <- valueOf.keys if !sampled.contains(site) do
+    throw IllegalArgumentException(
+      s"Site '${site.name}' is observed, but the model never samples it. " +
+        s"Sites in the model: ${sampled.map(_.name).mkString(", ")}."
+    )
+  result
