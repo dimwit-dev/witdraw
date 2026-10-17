@@ -155,7 +155,7 @@ object MissingData:
     println(s"latent sites: ${latent.sites.map(_.name).mkString(", ")}")
 
     // NUTS starts from the MAP
-    val start = MAP(latent, steps = 3000, learningRate = 0.1f)
+    val start = MAP(latent)
 
     val nuts = NUTS(latent, stepSize = 0.02)
     trait Sample derives Label

@@ -39,13 +39,13 @@ object Laplace:
     */
   def apply(
       latent: Latent,
-      steps: Int = 1000,
+      maxSteps: Int = 10000,
       learningRate: Float = 0.05f
   ): SamplingAlgorithm[latent.Params, LaplaceState[latent.Params], Unit] =
     val atMode = apply[latent.Params](latent.logDensity)
     atMode.copy(init = start =>
       atMode.init(
-        maximise("Laplace", latent.logDensity, start, steps, learningRate)
+        maximise("Laplace", latent.logDensity, start, maxSteps, learningRate)
       )
     )
 

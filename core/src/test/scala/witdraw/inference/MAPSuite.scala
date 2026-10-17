@@ -28,6 +28,6 @@ class MAPSuite extends munit.FunSuite:
 
   test("MAP that has not converged is an error"):
     val e = intercept[IllegalStateException](
-      MAP(latent, start = Seq(P := Tensor0(0.01f)), steps = 10)
+      MAP(latent, start = Seq(P := Tensor0(0.01f)), maxSteps = 100, learningRate = 0.001f)
     )
     assert(e.getMessage.contains("did not converge"), e.getMessage)
