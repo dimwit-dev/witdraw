@@ -1,20 +1,18 @@
 package witdraw
 
 import dimwit.*
+import dimwit.stats.Distribution
 import scala.collection.mutable
 
 /** What happened at one site during a run of a model. */
-case class TraceEntry[Ten <: Tensor[?, ?]](
-    site: Site[Ten],
-    distribution: DistributionOf[Ten],
-    value: Ten,
+case class TraceEntry[T <: Tuple, V](
+    site: SiteDef[T, V],
+    distribution: Distribution[T, V],
+    value: Tensor[T, V],
     observed: Boolean
 ):
   /** The log-density of the value under the site's distribution. */
-  def logProb: Tensor0[Float32] =
-    distribution
-      .logProb(value.asInstanceOf[Tensor[ShapeOf[Ten], ElemOf[Ten]]])
-      .asFloat
+  def logProb: Tensor0[Float32] = distribution.logProb(value).asFloat
 
 /** The sites of one run of a model, in the order in which they were sampled.
   *
@@ -24,27 +22,28 @@ case class TraceEntry[Ten <: Tensor[?, ?]](
   * tr(Sigma)        // the value of Sigma in this run, a Sigma.Value
   * }}}
   */
-final class Trace(val entries: Seq[TraceEntry[?]]):
-  private val bySite: Map[Site[?], TraceEntry[?]] =
+final class Trace(val entries: Seq[TraceEntry[?, ?]]):
+  private val bySite: Map[SiteDef[?, ?], TraceEntry[?, ?]] =
     entries.map(e => e.site -> e).toMap
 
-  def sites: Seq[Site[?]] = entries.map(_.site)
-  def latentSites: Seq[Site[?]] = entries.filterNot(_.observed).map(_.site)
-  def observedSites: Seq[Site[?]] = entries.filter(_.observed).map(_.site)
+  def sites: Seq[SiteDef[?, ?]] = entries.map(_.site)
+  def latentSites: Seq[SiteDef[?, ?]] =
+    entries.filterNot(_.observed).map(_.site)
+  def observedSites: Seq[SiteDef[?, ?]] = entries.filter(_.observed).map(_.site)
 
-  def contains(site: Site[?]): Boolean = bySite.contains(site)
+  def contains(site: SiteDef[?, ?]): Boolean = bySite.contains(site)
 
   /** Everything recorded for `site`. */
-  def entry[Ten <: Tensor[?, ?]](site: Site[Ten]): TraceEntry[Ten] =
+  def entry[T <: Tuple, V](site: SiteDef[T, V]): TraceEntry[T, V] =
     bySite.get(site) match
-      case Some(e) => e.asInstanceOf[TraceEntry[Ten]]
+      case Some(e) => e.asInstanceOf[TraceEntry[T, V]]
       case None    =>
         throw java.util.NoSuchElementException(
           s"Site '${site.name}' is not in the trace. Sites: ${sites.map(_.name).mkString(", ")}"
         )
 
   /** The value of `site` in this run. */
-  def apply[Ten <: Tensor[?, ?]](site: Site[Ten]): Ten = entry(site).value
+  def apply[T <: Tuple, V](site: SiteDef[T, V]): Tensor[T, V] = entry(site).value
 
   override def toString: String =
     entries
@@ -65,12 +64,12 @@ final class Trace(val entries: Seq[TraceEntry[?]]):
   * }}}
   */
 def withTrace[A](model: ProbProg[A])(using ctx: ProbContext): (A, Trace) =
-  val entries = mutable.ArrayBuffer.empty[TraceEntry[?]]
+  val entries = mutable.ArrayBuffer.empty[TraceEntry[?, ?]]
   val result = model(using
     new Handler(ctx):
-      override def sample[Ten <: Tensor[?, ?]](
-          statement: SampleStatement[Ten]
-      ): Ten =
+      override def sample[T <: Tuple, V](
+          statement: SampleStatement[T, V]
+      ): Tensor[T, V] =
         val value = outer.sample(statement)
         entries += TraceEntry(
           statement.site,

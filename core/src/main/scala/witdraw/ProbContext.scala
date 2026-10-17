@@ -1,6 +1,7 @@
 package witdraw
 
 import dimwit.*
+import dimwit.stats.Distribution
 import scala.annotation.implicitNotFound
 
 /** A probabilistic program: code that needs a [[ProbContext]] to run.
@@ -43,7 +44,7 @@ trait ProbContext:
   /** Run the statement `statement.site ~ statement.distribution` and return the
     * value of the site.
     */
-  def sample[Ten <: Tensor[?, ?]](statement: SampleStatement[Ten]): Ten
+  def sample[T <: Tuple, V](statement: SampleStatement[T, V]): Tensor[T, V]
 
 /** One `site ~ distribution` statement, as seen by handlers and interpreters.
   *
@@ -51,10 +52,10 @@ trait ProbContext:
   *   the value of the site, if a handler has fixed it (e.g. [[observe]]).
   *   `None` means the site is free: the interpreter chooses its value.
   */
-case class SampleStatement[Ten <: Tensor[?, ?]](
-    site: Site[Ten],
-    distribution: DistributionOf[Ten],
-    observed: Option[Ten]
+case class SampleStatement[T <: Tuple, V](
+    site: SiteDef[T, V],
+    distribution: Distribution[T, V],
+    observed: Option[Tensor[T, V]]
 )
 
 /** Base class for handlers: a context that passes every statement on to the
@@ -65,12 +66,12 @@ case class SampleStatement[Ten <: Tensor[?, ?]](
   * {{{
   * def logSites[A](block: ProbProg[A])(using ctx: ProbContext): A =
   *   block(using new Handler(ctx):
-  *     override def sample[Ten <: Tensor[?, ?]](s: SampleStatement[Ten]): Ten =
+  *     override def sample[T <: Tuple, V](s: SampleStatement[T, V]): Tensor[T, V] =
   *       println(s"sampling ${s.site.name}")
   *       outer.sample(s)
   *   )
   * }}}
   */
 abstract class Handler(protected val outer: ProbContext) extends ProbContext:
-  def sample[Ten <: Tensor[?, ?]](statement: SampleStatement[Ten]): Ten =
+  def sample[T <: Tuple, V](statement: SampleStatement[T, V]): Tensor[T, V] =
     outer.sample(statement)

@@ -14,17 +14,17 @@ import witdraw.reparam.Bijector
   * `bijector.forward(z)`. For example, `Constraint(Sigma, Bijector.exp)` keeps
   * `Sigma` positive.
   */
-final class Constraint[Ten <: Tensor[?, ?]] private (
-    val site: Site[Ten],
+final class Constraint[T <: Tuple, V] private (
+    val site: SiteDef[T, V],
     private[witdraw] val bijector: Bijector[Any, Any],
     private[witdraw] val unconstrainedTree: TensorTree[Any]
 )
 
 object Constraint:
-  def apply[TZ <: Tuple: Labels, VZ, Ten <: Tensor[?, ?]](
-      site: Site[Ten],
-      bijector: Bijector[Tensor[TZ, VZ], Ten]
-  ): Constraint[Ten] =
+  def apply[TZ <: Tuple: Labels, VZ, T <: Tuple, V](
+      site: SiteDef[T, V],
+      bijector: Bijector[Tensor[TZ, VZ], Tensor[T, V]]
+  ): Constraint[T, V] =
     new Constraint(
       site,
       bijector.asInstanceOf[Bijector[Any, Any]],
@@ -52,16 +52,18 @@ final class Latent private (
     slots: Vector[Latent.Slot],
     initial: Vector[Any]
 ):
-  private val indexOf: Map[Site[?], Int] = slots.map(_.site).zipWithIndex.toMap
+  private val indexOf: Map[SiteDef[?, ?], Int] = slots.map(_.site).zipWithIndex.toMap
 
   /** Values for the latent sites of the model. */
   final class Params private[Latent] (
       private[Latent] val unconstrained: Vector[Any]
   ):
     /** The value of `site`, in the model's own (constrained) space. */
-    def apply[Ten <: Tensor[?, ?]](site: Site[Ten]): Ten =
+    def apply[T <: Tuple, V](site: SiteDef[T, V]): Tensor[T, V] =
       val slot = slotOf(site)
-      slots(slot).bijector.forward(unconstrained(slot)).asInstanceOf[Ten]
+      slots(slot).bijector
+        .forward(unconstrained(slot))
+        .asInstanceOf[Tensor[T, V]]
 
     override def toString: String =
       slots
@@ -73,7 +75,7 @@ final class Latent private (
     given TreeOf[Params, Float32] = new TreeOf[Params, Float32] {}
 
   /** The latent sites, in the order in which the model samples them. */
-  def sites: Seq[Site[?]] = slots.map(_.site)
+  def sites: Seq[SiteDef[?, ?]] = slots.map(_.site)
 
   /** Starting values for inference: the values of the traced run. */
   def init: Params = initWith()
@@ -87,7 +89,7 @@ final class Latent private (
     * lie outside when the constraint is stricter than the model, and then the
     * site needs a given value.
     */
-  def initWith(values: Observation[?]*): Params =
+  def initWith(values: Observation[?, ?]*): Params =
     val start = values.foldLeft(initial): (acc, o) =>
       val slot = slotOf(o.site)
       acc.updated(slot, slots(slot).bijector.inverse(o.value))
@@ -122,7 +124,7 @@ final class Latent private (
       slots.indices.map(i => slots(i).observation(params.unconstrained(i)))
     ModelScorer.run(observe(observations*)(model))
 
-  private def slotOf(site: Site[?]): Int =
+  private def slotOf(site: SiteDef[?, ?]): Int =
     indexOf.getOrElse(
       site,
       throw java.util.NoSuchElementException(
@@ -208,11 +210,11 @@ object Latent:
     * site must be continuous (`Float32`); a discrete latent site is an error.
     * `constraints` gives a change of variables for some of the latent sites.
     */
-  def discover(key: Random.Key, constraints: Constraint[?]*)(
+  def discover(key: Random.Key, constraints: Constraint[?, ?]*)(
       model: ProbProg[Any]
   ): Latent =
     val (_, tr) = ForwardSampler.run(key)(withTrace(model))
-    val bySite: Map[Site[?], Constraint[?]] =
+    val bySite: Map[SiteDef[?, ?], Constraint[?, ?]] =
       constraints.map(c => c.site -> c).toMap
     require(
       bySite.size == constraints.size,
@@ -224,10 +226,10 @@ object Latent:
       s"Constraints for ${notLatent.map(s => s"'${s.name}'").mkString(", ")}, which are not latent sites of the model. " +
         s"Latent sites: ${tr.latentSites.map(_.name).mkString(", ")}"
     )
-    val notContinuous = tr.latentSites.filter(_.dtype != DType.Float32)
+    val notContinuous = tr.latentSites.filter(tr(_).dtype != DType.Float32)
     require(
       notContinuous.isEmpty,
-      s"Latent sites must be continuous (Float32), but ${notContinuous.map(s => s"'${s.name}' is ${s.dtype}").mkString(", ")}. " +
+      s"Latent sites must be continuous (Float32), but ${notContinuous.map(s => s"'${s.name}' is ${tr(s).dtype}").mkString(", ")}. " +
         "Observe these sites, or marginalise them out of the model."
     )
     val slots = tr.latentSites.toVector.map: site =>
@@ -241,7 +243,7 @@ object Latent:
     * and how to treat the unconstrained value as a tensor tree.
     */
   private[witdraw] final case class Slot(
-      site: Site[?],
+      site: SiteDef[?, ?],
       bijector: Bijector[Any, Any],
       tree: TensorTree[Any]
   ):
@@ -258,13 +260,11 @@ object Latent:
         )
         .forall(identity)
 
-    def observation(z: Any): Observation[?] =
+    def observation(z: Any): Observation[?, ?] =
       Observation(
-        site.asInstanceOf[Site[Tensor[Tuple, Any]]],
+        site.asInstanceOf[SiteDef[Tuple, Any]],
         bijector.forward(z).asInstanceOf[Tensor[Tuple, Any]]
       )
 
-  private def treeOf[Ten <: Tensor[?, ?]](site: Site[Ten]): TensorTree[Any] =
-    TensorTree
-      .tensor[ShapeOf[Ten], ElemOf[Ten]](using site.labels)
-      .asInstanceOf[TensorTree[Any]]
+  private def treeOf[T <: Tuple, V](site: SiteDef[T, V]): TensorTree[Any] =
+    TensorTree.tensor[T, V](using site.labels).asInstanceOf[TensorTree[Any]]

@@ -11,18 +11,20 @@ import scala.collection.mutable
   * one run, which would make observations of that site ambiguous.
   */
 abstract class Interpreter extends ProbContext:
-  private val sampled = mutable.Set.empty[Site[?]]
+  private val sampled = mutable.Set.empty[SiteDef[?, ?]]
 
-  final def sample[Ten <: Tensor[?, ?]](statement: SampleStatement[Ten]): Ten =
+  final def sample[T <: Tuple, V](
+      statement: SampleStatement[T, V]
+  ): Tensor[T, V] =
     if !sampled.add(statement.site) then
       throw IllegalArgumentException(
         s"Site '${statement.site.name}' is sampled more than once. Each site may appear only once in a model."
       )
     interpret(statement)
 
-  protected def interpret[Ten <: Tensor[?, ?]](
-      statement: SampleStatement[Ten]
-  ): Ten
+  protected def interpret[T <: Tuple, V](
+      statement: SampleStatement[T, V]
+  ): Tensor[T, V]
 
 /** Runs a model forward: free sites are drawn from their distributions,
   * observed sites keep their observed value. The result is the model's own
@@ -34,13 +36,13 @@ object ForwardSampler:
       new Interpreter:
         private var nextKey = key
 
-        protected def interpret[Ten <: Tensor[?, ?]](
-            statement: SampleStatement[Ten]
-        ): Ten =
+        protected def interpret[T <: Tuple, V](
+            statement: SampleStatement[T, V]
+        ): Tensor[T, V] =
           statement.observed.getOrElse:
             val (keep, use) = nextKey.split2()
             nextKey = keep
-            statement.distribution.sample(use).asInstanceOf[Ten]
+            statement.distribution.sample(use)
     )
 
 /** Like [[ForwardSampler]], but also returns the log-density of all sites, free
@@ -54,13 +56,13 @@ object ScoredSampler:
       new Interpreter:
         private var nextKey = key
 
-        protected def interpret[Ten <: Tensor[?, ?]](
-            statement: SampleStatement[Ten]
-        ): Ten =
+        protected def interpret[T <: Tuple, V](
+            statement: SampleStatement[T, V]
+        ): Tensor[T, V] =
           val value = statement.observed.getOrElse:
             val (keep, use) = nextKey.split2()
             nextKey = keep
-            statement.distribution.sample(use).asInstanceOf[Ten]
+            statement.distribution.sample(use)
           logProb = logProb + logProbOf(statement, value)
           value
     )
@@ -75,9 +77,9 @@ object ModelScorer:
     var logProb = Tensor0(0f)
     model(using
       new Interpreter:
-        protected def interpret[Ten <: Tensor[?, ?]](
-            statement: SampleStatement[Ten]
-        ): Ten =
+        protected def interpret[T <: Tuple, V](
+            statement: SampleStatement[T, V]
+        ): Tensor[T, V] =
           val value = statement.observed.getOrElse:
             throw IllegalArgumentException(
               s"Site '${statement.site.name}' is free, but ModelScorer needs every site to be observed (use observe, or Latent for the parameters)."
@@ -87,10 +89,8 @@ object ModelScorer:
     )
     logProb
 
-private def logProbOf[Ten <: Tensor[?, ?]](
-    statement: SampleStatement[Ten],
-    value: Ten
+private def logProbOf[T <: Tuple, V](
+    statement: SampleStatement[T, V],
+    value: Tensor[T, V]
 ): Tensor0[Float32] =
-  statement.distribution
-    .logProb(value.asInstanceOf[Tensor[ShapeOf[Ten], ElemOf[Ten]]])
-    .asFloat
+  statement.distribution.logProb(value).asFloat

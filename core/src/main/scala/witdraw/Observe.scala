@@ -16,10 +16,10 @@ import scala.collection.mutable
   * Observing a site that the model never samples is an error, as is observing a
   * site that a handler further in has already observed.
   */
-def observe[A](observations: Observation[?]*)(model: ProbProg[A])(using
+def observe[A](observations: Observation[?, ?]*)(model: ProbProg[A])(using
     outer: ProbContext
 ): A =
-  val bySite: Map[Site[?], Any] =
+  val bySite: Map[SiteDef[?, ?], Any] =
     observations.map(o => o.site -> o.value).toMap
   require(
     bySite.size == observations.size,
@@ -38,13 +38,13 @@ def observe[A](observations: Observation[?]*)(model: ProbProg[A])(using
 /** The handler behind [[observe]]: fixes every site for which `valueOf` has a
   * value, and records which sites the model sampled.
   */
-private class Observer(outer: ProbContext, valueOf: Site[?] => Option[Any])
+private class Observer(outer: ProbContext, valueOf: SiteDef[?, ?] => Option[Any])
     extends Handler(outer):
-  val sampled = mutable.LinkedHashSet.empty[Site[?]]
+  val sampled = mutable.LinkedHashSet.empty[SiteDef[?, ?]]
 
-  override def sample[Ten <: Tensor[?, ?]](
-      statement: SampleStatement[Ten]
-  ): Ten =
+  override def sample[T <: Tuple, V](
+      statement: SampleStatement[T, V]
+  ): Tensor[T, V] =
     sampled += statement.site
     valueOf(statement.site) match
       case None        => outer.sample(statement)
@@ -53,7 +53,7 @@ private class Observer(outer: ProbContext, valueOf: Site[?] => Option[Any])
           statement.observed.isEmpty,
           s"Site '${statement.site.name}' is observed twice."
         )
-        outer.sample(statement.copy(observed = Some(value.asInstanceOf[Ten])))
+        outer.sample(statement.copy(observed = Some(value.asInstanceOf[Tensor[T, V]])))
 
 private def quoted(names: Iterable[String]): String =
   names.map(n => s"'$n'").mkString(", ")

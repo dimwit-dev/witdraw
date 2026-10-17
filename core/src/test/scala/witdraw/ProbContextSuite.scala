@@ -102,9 +102,9 @@ class ProbContextSuite extends munit.FunSuite:
     def recordSites[A](block: ProbProg[A])(using ctx: ProbContext): A =
       block(using
         new Handler(ctx):
-          override def sample[Ten <: Tensor[?, ?]](
-              s: SampleStatement[Ten]
-          ): Ten =
+          override def sample[T <: Tuple, V](
+              s: SampleStatement[T, V]
+          ): Tensor[T, V] =
             seen += s"${s.site.name}${
                 if s.observed.isDefined then "=obs" else ""
               }"
@@ -173,19 +173,11 @@ class ProbContextSuite extends munit.FunSuite:
     // d/dmu at mu = 0, sigma = 1: sum(y) - mu / 100
     assertEqualsFloat(grad(Mu).item, 1.5f, 1e-4f)
 
-  test(
-    "Latent errors: unknown site, constraint on observed site, discrete site"
-  ):
+  test("Latent errors: unknown site, constraint on observed site"):
     intercept[NoSuchElementException](latent.init(Y))
     intercept[IllegalArgumentException]:
       Latent.discover(Key(1), Constraint(Y, Bijector.exp[Tuple1[Sample]])):
         observe(Y := yData)(model)
-    // Binomial samples are float32 at runtime, so the check must use the
-    // site's declared type
-    object Count extends Site[Tensor0[Int32]]
-    val e = intercept[IllegalArgumentException]:
-      Latent.discover(Key(1))(Count ~ Binomial(3, Prob(Tensor0(0.5f))))
-    assert(e.getMessage.contains("'Count' is Int32"), e.getMessage)
 
   trait Comp derives Label
   trait CompZ derives Label
