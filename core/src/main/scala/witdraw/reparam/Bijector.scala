@@ -37,13 +37,6 @@ trait Bijector[Z, X]:
 
 object Bijector:
 
-  /** Untyped identity — used by `Latent` for sites without a constraint. */
-  private[witdraw] val identityErased: Bijector[Any, Any] =
-    new Bijector[Any, Any]:
-      def forward(z: Any): Any = z
-      def inverse(x: Any): Any = x
-      def logDetJac(z: Any): Tensor0[Float32] = Tensor0(0f)
-
   /** `x = z` (an unconstrained real parameter). */
   def identity[T <: Tuple: Labels]
       : Bijector[Tensor[T, Float32], Tensor[T, Float32]] =

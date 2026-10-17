@@ -1,41 +1,52 @@
 package witdraw
 
 import dimwit.*
-import dimwit.jax.Jax
 import dimwit.random.Random
 import dimwit.tensor.Labels
 import dimwit.tensortree.{TensorTree, TreeOf}
-import me.shadaj.scalapy.py
-import me.shadaj.scalapy.py.SeqConverters
 import witdraw.reparam.Bijector
 
 /** A change of variables for a latent site: inference algorithms move freely in
-  * the unconstrained space of `bijector`, and the model sees
-  * `bijector.forward(z)`. For example, `Constraint(Sigma, Bijector.exp)` keeps
-  * `Sigma` positive.
+  * an unconstrained space `Z`, and the model sees `bijector.forward(z)`. For
+  * example, `Constraint(Sigma, Bijector.exp)` keeps `Sigma` positive.
   */
-final class Constraint[T <: Tuple, V] private (
-    val site: SiteDef[T, V],
-    private[witdraw] val bijector: Bijector[Any, Any],
-    private[witdraw] val unconstrainedTree: TensorTree[Any]
-)
+sealed abstract class Constraint[T <: Tuple, V](val site: SiteDef[T, V]):
+  /** The type of the unconstrained value. */
+  type Z
+  private[witdraw] def bijector: Bijector[Z, Tensor[T, V]]
+  private[witdraw] def zTree: TensorTree[Z]
 
 object Constraint:
   def apply[TZ <: Tuple: Labels, VZ, T <: Tuple, V](
       site: SiteDef[T, V],
       bijector: Bijector[Tensor[TZ, VZ], Tensor[T, V]]
   ): Constraint[T, V] =
-    new Constraint(
-      site,
-      bijector.asInstanceOf[Bijector[Any, Any]],
-      TensorTree.tensor[TZ, VZ].asInstanceOf[TensorTree[Any]]
-    )
+    val b = bijector
+    new Constraint(site):
+      type Z = Tensor[TZ, VZ]
+      def bijector = b
+      def zTree = TensorTree.tensor[TZ, VZ]
+
+  /** No change of variables: inference moves in the site's own space. */
+  private[witdraw] def none[T <: Tuple, V](s: SiteDef[T, V]): Constraint[T, V] =
+    new Constraint(s):
+      type Z = Tensor[T, V]
+      def bijector = new Bijector[Z, Z]:
+        def forward(z: Z) = z
+        def inverse(x: Z) = x
+        def logDetJac(z: Z) = Tensor0(0f)
+      def zTree = TensorTree.tensor[T, V](using s.labels)
+
+/** The axis of [[Latent.Params]]: the unconstrained values of all latent
+  * sites, one after the other.
+  */
+trait LatentDim derives Label
 
 /** The latent sites of a model, found by tracing one forward run, and a
   * parameter type for them.
   *
   * {{{
-  * val latent = Latent.discover(Key(0), Constraint(Sigma, Bijector.exp)):
+  * val latent = Latent.discover(Constraint(Sigma, Bijector.exp)):
   *   observe(Y := yData)(model(x))
   *
   * val nuts = NUTSAlgorithm[latent.Params](stepSize = 0.05)(latent.logDensity)
@@ -43,36 +54,30 @@ object Constraint:
   * draws.map(_(Sigma))   // List[Sigma.Value], always positive
   * }}}
   *
-  * `latent.Params` holds one value per latent site. Inference algorithms see it
-  * as a tensor tree in unconstrained space; `params(site)` returns the value in
-  * the model's own space.
+  * `latent.Params` holds the unconstrained values of all latent sites in one
+  * vector, which is what inference algorithms move around in; `params(site)`
+  * returns the value of a site in the model's own space.
   */
 final class Latent private (
     model: ProbProg[Any],
-    slots: Vector[Latent.Slot],
-    initial: Vector[Any]
+    slots: Vector[Latent.Slot[?, ?]]
 ):
-  private val indexOf: Map[SiteDef[?, ?], Int] = slots.map(_.site).zipWithIndex.toMap
+  private val bySite: Map[SiteDef[?, ?], Latent.Slot[?, ?]] =
+    slots.map(s => s.site -> s).toMap
 
-  /** Values for the latent sites of the model. */
-  final class Params private[Latent] (
-      private[Latent] val unconstrained: Vector[Any]
-  ):
-    /** The value of `site`, in the model's own (constrained) space. */
-    def apply[T <: Tuple, V](site: SiteDef[T, V]): Tensor[T, V] =
-      val slot = slotOf(site)
-      slots(slot).bijector
-        .forward(unconstrained(slot))
-        .asInstanceOf[Tensor[T, V]]
-
-    override def toString: String =
-      slots
-        .map(s => s"${s.site.name} = ${apply(s.site)}")
-        .mkString("Params(", ", ", ")")
+  /** Values for the latent sites of the model: their unconstrained values, in
+    * one vector.
+    */
+  opaque type Params = Tensor1[LatentDim, Float32]
 
   object Params:
-    given TensorTree[Params] = ParamsTree
-    given TreeOf[Params, Float32] = new TreeOf[Params, Float32] {}
+    given TensorTree[Params] = TensorTree.tensor[Tuple1[LatentDim], Float32]
+    given TreeOf[Params, Float32] = TreeOf.tensor[Tuple1[LatentDim], Float32]
+
+    extension (params: Params)
+      /** The value of `site`, in the model's own (constrained) space. */
+      def apply[T <: Tuple, V](site: SiteDef[T, V]): Tensor[T, V] =
+        slotOf(site).valueIn(params).asInstanceOf[Tensor[T, V]]
 
   /** The latent sites, in the order in which the model samples them. */
   def sites: Seq[SiteDef[?, ?]] = slots.map(_.site)
@@ -90,29 +95,27 @@ final class Latent private (
     * site needs a given value.
     */
   def initWith(values: Observation[?, ?]*): Params =
-    val start = values.foldLeft(initial): (acc, o) =>
-      val slot = slotOf(o.site)
-      acc.updated(slot, slots(slot).bijector.inverse(o.value))
-    val overridden = values.map(_.site).toSet
-    for i <- slots.indices if !slots(i).isFinite(start(i)) do
-      val site = slots(i).site
-      val origin =
-        if overridden(site) then "The given value" else "The traced value"
+    val givenValues: Map[SiteDef[?, ?], Tensor[?, ?]] =
+      values.map(o => slotOf(o.site).site -> o.value).toMap
+    val start = slots.map: slot =>
+      givenValues.get(slot.site).fold(slot.initial)(slot.toFlatUnchecked)
+    for (slot, part) <- slots.zip(start)
+    if !java.lang.Float.isFinite(part.sum.item) do
+      val name = slot.site.name
+      val origin = if givenValues.contains(slot.site) then "given" else "traced"
       throw IllegalArgumentException(
-        s"$origin of '${site.name}' lies outside its constraint (${site.name} = ${slots(i).bijector.forward(start(i))}). " +
-          s"Give a starting value inside it with latent.initWith(${site.name} := ...)."
+        s"The $origin value of '$name' lies outside its constraint ($name = ${slot.fromFlat(part)}). " +
+          s"Give a starting value inside it with latent.initWith($name := ...)."
       )
-    new Params(start)
+    concatenate(start, Axis[LatentDim])
 
   /** The log-density to sample from, e.g. with NUTS: the density of the
     * unconstrained values, which is [[modelLogDensity]] plus the log-Jacobian
     * of the constraints.
     */
   def logDensity(params: Params): Tensor0[Float32] =
-    val zs = params.unconstrained
-    val logJacobian = slots.indices
-      .map(i => slots(i).bijector.logDetJac(zs(i)))
-      .foldLeft(Tensor0(0f))(_ + _)
+    val logJacobian =
+      slots.map(_.logDetJacIn(params)).foldLeft(Tensor0(0f))(_ + _)
     modelLogDensity(params) + logJacobian
 
   /** The log-density of the model, observed on the values `params(site)`.
@@ -120,151 +123,104 @@ final class Latent private (
     * maximum does not depend on the constraints.
     */
   def modelLogDensity(params: Params): Tensor0[Float32] =
-    val observations =
-      slots.indices.map(i => slots(i).observation(params.unconstrained(i)))
-    ModelScorer.run(observe(observations*)(model))
+    ModelScorer.run(observe(slots.map(_.observationIn(params))*)(model))
 
-  private def slotOf(site: SiteDef[?, ?]): Int =
-    indexOf.getOrElse(
+  private def slotOf(site: SiteDef[?, ?]): Latent.Slot[?, ?] =
+    bySite.getOrElse(
       site,
       throw java.util.NoSuchElementException(
         s"Site '${site.name}' is not a latent site of the model. Latent sites: ${sites.map(_.name).mkString(", ")}"
       )
     )
 
-  /** Params as a tensor tree: one leaf per latent site, as a Python tuple. */
-  private object ParamsTree extends TensorTree[Params]:
-    type Fn = [T <: Tuple, V] => (Labels[T]) ?=> (Tensor[T, V] => Tensor[T, V])
-    type NamedFn =
-      [T <: Tuple, V] => (Labels[T]) ?=> (
-          (String, Tensor[T, V]) => Tensor[T, V]
-      )
-    type PairFn = [T <: Tuple, V] => (Labels[T]) ?=> (
-        (Tensor[T, V], Tensor[T, V]) => Tensor[T, V]
-    )
-
-    private def build(leaf: (Latent.Slot, Int) => Any): Params =
-      new Params(slots.zipWithIndex.map(leaf.tupled))
-    private def pathOf(path: String, s: Latent.Slot) =
-      if path.isEmpty then s.site.name else s"$path.${s.site.name}"
-
-    def map(p: Params, f: Fn): Params =
-      build((s, i) => s.tree.map(p.unconstrained(i), f))
-    def mapWithName(p: Params, f: NamedFn, path: String = ""): Params =
-      build((s, i) =>
-        s.tree.mapWithName(p.unconstrained(i), f, pathOf(path, s))
-      )
-    def mapLeaves[A](
-        p: Params,
-        f: [T <: Tuple, V] => (Labels[T]) ?=> (Tensor[T, V] => A)
-    ): Iterator[A] =
-      slots.iterator
-        .zip(p.unconstrained)
-        .flatMap((s, z) => s.tree.mapLeaves(z, f))
-    def foreach(
-        p: Params,
-        f: [T <: Tuple, V] => (Labels[T]) ?=> (Tensor[T, V] => Unit)
-    ): Unit =
-      slots.zip(p.unconstrained).foreach((s, z) => s.tree.foreach(z, f))
-    def foreachWithName(
-        p: Params,
-        f: [T <: Tuple, V] => (Labels[T]) ?=> ((String, Tensor[T, V]) => Unit),
-        path: String = ""
-    ): Unit =
-      slots
-        .zip(p.unconstrained)
-        .foreach((s, z) => s.tree.foreachWithName(z, f, pathOf(path, s)))
-    def zipMap(p1: Params, p2: Params, f: PairFn): Params =
-      build((s, i) =>
-        s.tree.zipMap(p1.unconstrained(i), p2.unconstrained(i), f)
-      )
-
-    def toPyTree(p: Params): Jax.PyAny =
-      py.Dynamic.global.tuple(
-        slots
-          .zip(p.unconstrained)
-          .map((s, z) => s.tree.toPyTree(z))
-          .toPythonProxy
-      )
-    def fromPyTree(pyVal: Jax.PyAny): Params =
-      build((s, i) => s.tree.fromPyTree(pyVal.as[py.Dynamic].bracketAccess(i)))
-    def toNumpyTree(p: Params): Jax.PyAny =
-      py.Dynamic.global.tuple(
-        slots
-          .zip(p.unconstrained)
-          .map((s, z) => s.tree.toNumpyTree(z))
-          .toPythonProxy
-      )
-    def fromNumpyTree(pyVal: Jax.PyAny): Params =
-      build((s, i) =>
-        s.tree.fromNumpyTree(pyVal.as[py.Dynamic].bracketAccess(i))
-      )
-
 object Latent:
 
-  /** Runs `model` forward once with `key`, and collects its latent sites: the
-    * sites that are not observed. The values of that run are the default
-    * starting point, [[Latent.init]].
+  /** Runs `model` forward once, and collects its latent sites: the sites that
+    * are not observed. The values of that run are the default starting point,
+    * [[Latent.init]].
+    *
+    * The run uses a fixed key: which sites are latent cannot depend on the
+    * values drawn, so the key only decides the default starting point. Use
+    * [[Latent.initWith]] to start elsewhere.
     *
     * The parameters are meant for gradient-based inference, so every latent
     * site must be continuous (`Float32`); a discrete latent site is an error.
     * `constraints` gives a change of variables for some of the latent sites.
     */
-  def discover(key: Random.Key, constraints: Constraint[?, ?]*)(
-      model: ProbProg[Any]
-  ): Latent =
-    val (_, tr) = ForwardSampler.run(key)(withTrace(model))
-    val bySite: Map[SiteDef[?, ?], Constraint[?, ?]] =
-      constraints.map(c => c.site -> c).toMap
-    require(
-      bySite.size == constraints.size,
-      "A site has more than one constraint."
-    )
-    val notLatent = bySite.keySet -- tr.latentSites
-    require(
-      notLatent.isEmpty,
-      s"Constraints for ${notLatent.map(s => s"'${s.name}'").mkString(", ")}, which are not latent sites of the model. " +
-        s"Latent sites: ${tr.latentSites.map(_.name).mkString(", ")}"
-    )
-    val notContinuous = tr.latentSites.filter(tr(_).dtype != DType.Float32)
-    require(
-      notContinuous.isEmpty,
-      s"Latent sites must be continuous (Float32), but ${notContinuous.map(s => s"'${s.name}' is ${tr(s).dtype}").mkString(", ")}. " +
-        "Observe these sites, or marginalise them out of the model."
-    )
-    val slots = tr.latentSites.toVector.map: site =>
-      bySite.get(site) match
-        case Some(c) => Slot(site, c.bijector, c.unconstrainedTree)
-        case None    => Slot(site, Bijector.identityErased, treeOf(site))
-    val initial = slots.map(s => s.bijector.inverse(tr(s.site)))
-    new Latent(model, slots, initial)
+  def discover(constraints: Constraint[?, ?]*)(model: ProbProg[Any]): Latent =
+    val (_, tr) = ForwardSampler.run(Random.Key(0))(withTrace(model))
+    val latentSites = tr.latentSites
+    def names = latentSites.map(_.name).mkString(", ")
 
-  /** One latent site: how to map its unconstrained value to the model's space,
-    * and how to treat the unconstrained value as a tensor tree.
-    */
-  private[witdraw] final case class Slot(
-      site: SiteDef[?, ?],
-      bijector: Bijector[Any, Any],
-      tree: TensorTree[Any]
-  ):
-    /** Whether every element of the unconstrained value is finite. */
-    def isFinite(z: Any): Boolean =
-      tree
-        .mapLeaves(
-          z,
-          [T <: Tuple, V] =>
-            (labels: Labels[T]) ?=>
-              (t: Tensor[T, V]) =>
-                java.lang.Float
-                  .isFinite(t.asInstanceOf[Tensor[T, Float32]].sum.item)
-        )
-        .forall(identity)
-
-    def observation(z: Any): Observation[?, ?] =
-      Observation(
-        site.asInstanceOf[SiteDef[Tuple, Any]],
-        bijector.forward(z).asInstanceOf[Tensor[Tuple, Any]]
+    for (site, cs) <- constraints.groupBy(_.site) if cs.size > 1 do
+      throw IllegalArgumentException(
+        s"Site '${site.name}' has more than one constraint."
+      )
+    for c <- constraints if !latentSites.contains(c.site) do
+      throw IllegalArgumentException(
+        s"Site '${c.site.name}' has a constraint, but is not a latent site of the model. Latent sites: $names."
+      )
+    for site <- latentSites if tr(site).dtype != DType.Float32 do
+      throw IllegalArgumentException(
+        s"Site '${site.name}' is ${tr(site).dtype}, but latent sites must be continuous (Float32). " +
+          "Observe it, or marginalise it out of the model."
       )
 
-  private def treeOf[T <: Tuple, V](site: SiteDef[T, V]): TensorTree[Any] =
-    TensorTree.tensor[T, V](using site.labels).asInstanceOf[TensorTree[Any]]
+    val bySite = constraints.map(c => c.site -> c).toMap
+    val slots = latentSites.foldLeft(Vector.empty[Slot[?, ?]]): (acc, site) =>
+      val offset = acc.lastOption.fold(0)(s => s.offset + s.size)
+      val c = bySite.getOrElse(site, Constraint.none(site))
+      acc :+ slotFor(c, tr(c.site), offset)
+    new Latent(model, slots)
+
+  private type Flat = Tensor1[LatentDim, Float32]
+
+  /** The part `[offset, offset + size)` of the parameter vector that holds the
+    * unconstrained value of `site`, and how to convert between that part and
+    * the site's value.
+    *
+    * @param initial
+    *   the part for the site's traced value
+    */
+  private final class Slot[T <: Tuple, V](
+      val site: SiteDef[T, V],
+      val offset: Int,
+      val size: Int,
+      val initial: Flat,
+      val toFlat: Tensor[T, V] => Flat,
+      val fromFlat: Flat => Tensor[T, V],
+      logDetJac: Flat => Tensor0[Float32]
+  ):
+    def part(params: Flat): Flat =
+      params.slice(Axis[LatentDim].at(offset until offset + size))
+
+    def valueIn(params: Flat): Tensor[T, V] = fromFlat(part(params))
+    def observationIn(params: Flat): Observation[T, V] =
+      Observation(site, valueIn(params))
+    def logDetJacIn(params: Flat): Tensor0[Float32] = logDetJac(part(params))
+
+    /** `toFlat` for the value of an observation of `site`. */
+    def toFlatUnchecked(value: Tensor[?, ?]): Flat =
+      toFlat(value.asInstanceOf[Tensor[T, V]])
+
+  /** The slot for the site of `c`, starting at `offset`, with `traced` as the
+    * site's starting value.
+    */
+  private def slotFor[T <: Tuple, V](
+      c: Constraint[T, V],
+      traced: Tensor[T, V],
+      offset: Int
+  ): Slot[T, V] =
+    given TensorTree[c.Z] = c.zTree
+    val ravel = TensorTree.ravel(c.bijector.inverse(traced), Axis[LatentDim])
+    val toFlat = (x: Tensor[T, V]) => ravel.flatten(c.bijector.inverse(x))
+    val initial = toFlat(traced)
+    Slot(
+      c.site,
+      offset,
+      initial.shape.size,
+      initial,
+      toFlat,
+      fromFlat = flat => c.bijector.forward(ravel.unflatten(flat)),
+      logDetJac = flat => c.bijector.logDetJac(ravel.unflatten(flat))
+    )

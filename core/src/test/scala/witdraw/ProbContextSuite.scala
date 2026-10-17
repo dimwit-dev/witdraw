@@ -140,13 +140,14 @@ class ProbContextSuite extends munit.FunSuite:
     val total = tr.entries.map(_.logProb).reduce(_ + _)
     assertEqualsFloat(total.item, manualLogProb(r.mu.item, r.sigma.item), 1e-3f)
 
-  lazy val latent = Latent.discover(Key(1), Constraint(Sigma, Bijector.exp)):
+  lazy val latent = Latent.discover(Constraint(Sigma, Bijector.exp)):
     observe(Y := yData)(model)
 
   test("Latent finds the latent sites and starts from the traced values"):
     assertEquals(latent.sites, Seq(Mu, Sigma))
+    // discover traces the model with the fixed key Key(0)
     val (_, tr) =
-      ForwardSampler.run(Key(1))(withTrace(observe(Y := yData)(model)))
+      ForwardSampler.run(Key(0))(withTrace(observe(Y := yData)(model)))
     assertEqualsFloat(latent.init(Mu).item, tr(Mu).item, 1e-6f)
     assertEqualsFloat(latent.init(Sigma).item, tr(Sigma).item, 1e-5f)
 
@@ -174,7 +175,7 @@ class ProbContextSuite extends munit.FunSuite:
   test("Latent errors: unknown site, constraint on observed site"):
     intercept[NoSuchElementException](latent.init(Y))
     intercept[IllegalArgumentException]:
-      Latent.discover(Key(1), Constraint(Y, Bijector.exp[Tuple1[Sample]])):
+      Latent.discover(Constraint(Y, Bijector.exp[Tuple1[Sample]])):
         observe(Y := yData)(model)
 
   trait Comp derives Label
@@ -192,7 +193,6 @@ class ProbContextSuite extends munit.FunSuite:
     )
 
   final lazy val mixture = Latent.discover(
-    Key(5),
     Constraint(Weights, Bijector.simplexStickBreaking[CompZ, Comp](3)),
     Constraint(Locs, Bijector.ordered[Comp](3))
   )(mixturePrior)
@@ -206,7 +206,8 @@ class ProbContextSuite extends munit.FunSuite:
     val expected = ModelScorer.run:
       observe(Weights := weights, Locs := locs)(mixturePrior)
     assertEqualsFloat(mixture.modelLogDensity(p).item, expected.item, 1e-3f)
-    // the unconstrained parameters have K-1 coordinates for the weights
+    // the unconstrained parameters are one vector, with K-1 = 2 coordinates
+    // for the weights and 3 for the locations
     val leafSizes = TensorTree[mixture.Params]
       .mapLeaves(
         p,
@@ -214,7 +215,7 @@ class ProbContextSuite extends munit.FunSuite:
           (_: Labels[T]) ?=> (t: Tensor[T, V]) => t.shape.dimensions.product
       )
       .toList
-    assertEquals(leafSizes, List(2, 3))
+    assertEquals(leafSizes, List(5))
 
   test("a start value outside its constraint is an error, with a hint"):
     val unordered = Tensor1(Axis[Comp]).fromArray(Array(1f, -1f, 0f))
