@@ -2,9 +2,7 @@ package witdraw.distributions
 
 import dimwit.*
 import dimwit.linalg.LinearAlgebra
-import dimwit.python.PyBridge
 import dimwit.stats.{Beta, Normal}
-import me.shadaj.scalapy.py
 
 /** LKJ distribution over d×d correlation matrices.
   *
@@ -28,26 +26,29 @@ class LKJ[L: Label, V: IsFloating](
     val logDet: Tensor0[Float32] =
       (L_chol.diagonal(Axis[L]).log.sum * Tensor0(VType[V])(2f))
         .asType(VType[Float32])
-
     val eta = concentration.asType(VType[Float32])
-    val gammaln = PyBridge.liftPyFn[Tensor0[Float32], Tensor0[Float32]](
-      py.module("jax.scipy.special").gammaln
-    )
+    LogProb(((eta - Tensor0(1f)) * logDet - logNormaliser(eta)).asFloat32)
 
-    // LKJ normalizing constant (Lewandowski et al. 2009, scipy reference):
-    // log C = Σ_{k=1}^{d-1} [ (2α_k - 1)·log2 + log B(α_k, α_k) ]
-    // where α_k = η + (d - 1 - k) / 2,  log B(a,a) = 2·lgamma(a) - lgamma(2a)
-    var logNorm = Tensor0(0f)
-    for k <- 1 until d do
-      val alpha = eta + Tensor0((d - 1 - k).toFloat / 2f)
-      logNorm += (Tensor0(2f) * alpha - Tensor0(1f)) * Tensor0(
-        math.log(2).toFloat
-      ) +
-        Tensor0(2f) * gammaln(alpha) - gammaln(alpha * Tensor0(2f))
+  /** `log c_d`, with `p(R) = det(R)^(η-1) / c_d` (Lewandowski et al. 2009,
+    * eq. 16):
+    * `log c_d = Σ_{k=1}^{d-1} (d-k) · [ (2η-2+d-k)·log 2 + log B(a_k, a_k) ]`,
+    * where `a_k = η + (d-k-1)/2`.
+    */
+  private def logNormaliser(eta: Tensor0[Float32]): Tensor0[Float32] =
+    (1 until d)
+      .map: k =>
+        val a = eta + Tensor0((d - k - 1) / 2f)
+        val powerOf2 = eta * Tensor0(2f) + Tensor0((d - k - 2).toFloat)
+        (powerOf2 * Tensor0(math.log(2).toFloat) + logBetaFunction(a)) *
+          Tensor0((d - k).toFloat)
+      .foldLeft(Tensor0(0f))(_ + _)
 
-    val logProbValue = (eta - Tensor0(1f)) * logDet + logNorm
-
-    LogProb(logProbValue.asFloat32)
+  /** `log B(a, a)`. dimwit has no log-gamma function, so this reads it off the
+    * Beta(a, a) density at 1/2: `log p(1/2) = 2(a-1)·log(1/2) - log B(a, a)`.
+    */
+  private def logBetaFunction(a: Tensor0[Float32]): Tensor0[Float32] =
+    val logDensityAtHalf = Beta(a, a).logProb(Tensor0(0.5f)).asFloat32
+    (a - Tensor0(1f)) * Tensor0(2 * math.log(0.5).toFloat) - logDensityAtHalf
 
   override def sample(key: Random.Key): Tensor2[L, Prime[L], V] =
 
