@@ -99,10 +99,10 @@ class ProbContextSuite extends munit.FunSuite:
 
   test("a custom handler sees every statement of its block"):
     val seen = mutable.ListBuffer.empty[String]
-    def recordSites[A](block: ProbProg[A])(using ctx: ProbContext): A =
+    def recordSites[A](block: ProbProg[A])(using outer: ProbContext): A =
       block(using
-        new Handler(ctx):
-          override def sample[T <: Tuple, V](
+        new ProbContext:
+          def sample[T <: Tuple, V](
               s: SampleStatement[T, V]
           ): Tensor[T, V] =
             seen += s"${s.site.name}${

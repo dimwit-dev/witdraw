@@ -35,14 +35,17 @@ def observe[A](observations: Observation[?, ?]*)(model: ProbProg[A])(using
   )
   result
 
-/** The handler behind [[observe]]: fixes every site for which `valueOf` has a
-  * value, and records which sites the model sampled.
+/** The context behind [[observe]]: fixes every site for which `valueOf` has a
+  * value, records which sites the model sampled, and passes every statement on
+  * to `outer`.
   */
-private class Observer(outer: ProbContext, valueOf: SiteDef[?, ?] => Option[Any])
-    extends Handler(outer):
+private class Observer(
+    outer: ProbContext,
+    valueOf: SiteDef[?, ?] => Option[Any]
+) extends ProbContext:
   val sampled = mutable.LinkedHashSet.empty[SiteDef[?, ?]]
 
-  override def sample[T <: Tuple, V](
+  def sample[T <: Tuple, V](
       statement: SampleStatement[T, V]
   ): Tensor[T, V] =
     sampled += statement.site
@@ -53,7 +56,9 @@ private class Observer(outer: ProbContext, valueOf: SiteDef[?, ?] => Option[Any]
           statement.observed.isEmpty,
           s"Site '${statement.site.name}' is observed twice."
         )
-        outer.sample(statement.copy(observed = Some(value.asInstanceOf[Tensor[T, V]])))
+        outer.sample(
+          statement.copy(observed = Some(value.asInstanceOf[Tensor[T, V]]))
+        )
 
 private def quoted(names: Iterable[String]): String =
   names.map(n => s"'$n'").mkString(", ")

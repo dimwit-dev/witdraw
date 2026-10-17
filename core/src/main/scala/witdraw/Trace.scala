@@ -63,11 +63,11 @@ final class Trace(val entries: Seq[TraceEntry[?, ?]]):
   *     observe(Y := yData)(model(x))
   * }}}
   */
-def withTrace[A](model: ProbProg[A])(using ctx: ProbContext): (A, Trace) =
+def withTrace[A](model: ProbProg[A])(using outer: ProbContext): (A, Trace) =
   val entries = mutable.ArrayBuffer.empty[TraceEntry[?, ?]]
   val result = model(using
-    new Handler(ctx):
-      override def sample[T <: Tuple, V](
+    new ProbContext:
+      def sample[T <: Tuple, V](
           statement: SampleStatement[T, V]
       ): Tensor[T, V] =
         val value = outer.sample(statement)
