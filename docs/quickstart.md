@@ -397,3 +397,146 @@ Two things to keep in mind when composing:
   sites, even if they share a name. Each site may be sampled only once per
   run when it is observed, traced or inferred; there, sampling it twice is an
   error.
+
+## Components
+
+Methods are enough to split a model into parts, but each part still uses
+the global sites `Alpha`, `Beta` and `Sigma`. A part that samples sites can
+therefore be used only once per model. Calling `likelihood` twice, say for
+two outcomes, would sample `Y` twice.
+
+A *component* is a part of a model that owns its sites. It is written as a
+module: a trait that extends `Component` declares the part, and each object
+that extends the trait is one instance of it, with its own sites.
+
+As an example we let the noise scale depend on the features too, a
+*location-scale* regression:
+
+$$
+y_n \sim \mathcal{N}\big(a + x_n \cdot b,\ \exp(c + x_n \cdot d)^2\big)
+$$
+
+Both the mean and the log-scale are linear in the features, so we write the
+linear predictor once, as a component. Its prior scale is a trait parameter:
+
+```scala
+trait Linear(priorScale: Float) extends Component:
+  object Intercept extends Site[Tensor0[Float32]]
+  object Weights extends Site[Tensor1[Feature, Float32]]
+
+  def apply(x: Tensor2[Sample, Feature, Float32])(using ProbContext) =
+    val intercept = Intercept ~ Normal(0f, priorScale)
+    val weights = Weights ~ Normal.isotropic(
+      Tensor1(x.extent(Axis[Feature])).fill(0f),
+      priorScale
+    )
+    x.dot(Axis[Feature])(weights) +! intercept
+
+  def values(v: SiteValues) = Linear.Values(v(Intercept), v(Weights))
+
+object Linear:
+  case class Values(intercept: Tensor0[Float32], weights: Tensor1[Feature, Float32])
+```
+
+The method `values` and its record `Linear.Values` are optional; we come
+back to them below.
+
+A component can contain other components. The location-scale regression
+has two instances of `Linear`, and its own outcome site:
+
+```scala
+trait LocationScale extends Component:
+  object mean extends Linear(priorScale = 10f)
+  object logScale extends Linear(priorScale = 1f)
+  object Y extends Site[Tensor1[Sample, Float32]]
+
+  def apply(x: Tensor2[Sample, Feature, Float32])(using ProbContext) =
+    Y ~ Normal(mean(x), logScale(x).exp)
+
+  def values(v: SiteValues) = LocationScale.Values(mean.values(v), logScale.values(v))
+
+object LocationScale:
+  case class Values(mean: Linear.Values, logScale: Linear.Values)
+
+object outcome extends LocationScale
+```
+
+A site is named by the path of the components it is declared in. This is
+how sites with the same declaration are told apart, in error messages as
+well as here:
+
+```scala
+val lsLatent = Latent.discover():
+  observe(outcome.Y := yData):
+    outcome(xData)
+// lsLatent: Latent = witdraw.Latent@7d42ddd7
+
+lsLatent.sites.map(_.name)
+// res8: Seq[String] = Vector(
+//   "outcome.mean.Intercept",
+//   "outcome.mean.Weights",
+//   "outcome.logScale.Intercept",
+//   "outcome.logScale.Weights"
+// )
+```
+
+No constraint is needed: the scale is positive through `exp`, so all
+parameters can take any real value.
+
+### Values as a typed record
+
+`params(outcome.mean.Weights)` reads one value, but with many sites it helps
+to read all values of a component at once, as a typed record. This is what
+the `values` methods above do, and the records nest like the components do:
+`LocationScale.Values` holds one `Linear.Values` for the mean and one for
+the log-scale.
+
+A `SiteValues` gives the value of any site. Both a `Trace` from `withTrace`
+and `lsLatent.values(params)` are one, so the same method reads a record
+from a run of the model and from a point of the posterior. Here we find the
+posterior mode with `MAP` and read it as a record. We start the search at 0,
+i.e. mean 0 and scale 1 for every sample, rather than at the traced values,
+a draw from the prior whose scales can be extreme:
+
+```scala
+import witdraw.inference.MAP
+
+val zeros = Tensor1(xData.extent(Axis[Feature])).fill(0f)
+val start = Seq(
+  outcome.mean.Intercept := Tensor0(0f),
+  outcome.mean.Weights := zeros,
+  outcome.logScale.Intercept := Tensor0(0f),
+  outcome.logScale.Weights := zeros
+)
+```
+
+```scala
+val mode = outcome.values(lsLatent.values(MAP(lsLatent, start)))
+// mode: Values = Values(
+//   mean = Values(intercept = 0.40074044, weights = [-1.4111495  2.0541945]),
+//   logScale = Values(
+//     intercept = -0.40187716,
+//     weights = [ 0.0855608  -0.02117608]
+//   )
+// )
+mode.mean.weights
+// res9: Tensor[Tuple1[Feature], Float32] = [-1.4111495  2.0541945]
+mode.logScale.weights
+// res10: Tensor[Tuple1[Feature], Float32] = [ 0.0855608  -0.02117608]
+mode.logScale.intercept.exp
+// res11: Tensor[EmptyTuple, Float32] = 0.669063
+```
+
+The weights of the mean are close to `betaTrue`. The data was simulated
+with a constant noise scale, so the weights of the log-scale are close to 0,
+and the scale itself, $e^c$, is close to the noise scale $\sigma$ that NUTS
+found for the first model.
+
+Records of tensors are DimWit tensor trees, so draws can also be averaged,
+mapped over or saved as a whole. The example
+[LocationScale.scala](../examples/src/main/scala/witdraw/examples/components/LocationScale.scala)
+fits a model with two outcomes, each a `LocationScale`, with NUTS, and
+averages the posterior draws as records.
+
+A component that is not an object, e.g. one of several created in a loop,
+needs an explicit name: `new Linear(1f) { override def name = s"region$i" }`.
