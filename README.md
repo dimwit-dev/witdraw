@@ -111,6 +111,53 @@ val draws = nuts.run(posterior.init, Key(3)).drop(500).take(2000).map(_._1).toLi
 draws.map(_(Sigma))   // posterior draws of sigma, each a Sigma.Value (> 0)
 ```
 
+Larger models are built from components, written as modules: a trait declares
+a part of the model, and each object that extends it is one instance of it,
+with its own sites. Sites are named by the path of their components, so a part
+can be used more than once in the same model:
+
+```scala
+trait Linear extends Component:
+  object Intercept extends Site[Tensor0[Float32]]
+  object Weights   extends Site[Tensor1[Feature, Float32]]
+
+  def apply(x: Tensor2[Sample, Feature, Float32])(using ProbContext) =
+    val intercept = Intercept ~ Normal(0f, 1f)
+    val weights = Weights ~ Normal.isotropic(Tensor1(x.extent(Axis[Feature])).fill(0f), 1f)
+    x.dot(Axis[Feature])(weights) +! intercept
+
+trait Outcome extends Component:
+  object mean  extends Linear   // sites <outcome>.mean.Intercept, ...
+  object scale extends Linear   // sites <outcome>.scale.Intercept, ...
+  object Y extends Site[Tensor1[Sample, Float32]]
+
+  def apply(x: Tensor2[Sample, Feature, Float32])(using ProbContext) =
+    Y ~ Normal(mean(x), scale(x).exp)
+
+object bloodPressure extends Outcome   // sites bloodPressure.mean.Intercept, ...
+object cholesterol   extends Outcome   // sites cholesterol.mean.Intercept, ...
+```
+
+A component can also offer a typed record of its values, which nests like the
+components do. `SiteValues` reads site values from a trace or from a
+posterior draw, so the same method serves both:
+
+```scala
+trait Linear extends Component:
+  ...
+  def values(v: SiteValues) = Linear.Values(v(Intercept), v(Weights))
+
+object Linear:
+  case class Values(intercept: Tensor0[Float32], weights: Tensor1[Feature, Float32])
+
+val draw = bloodPressure.values(latent.values(params))
+draw.scale.weights   // Tensor1[Feature, Float32]
+```
+
+Records of tensors are DimWit tensor trees, so draws can be averaged, mapped
+over or saved as a whole. The complete model is in
+[LocationScale.scala](examples/src/main/scala/witdraw/examples/components/LocationScale.scala).
+
 The [quickstart](docs/quickstart.md) is a complete, runnable version of this
 example: it simulates data, runs NUTS and checks the posterior against the
 true parameters.

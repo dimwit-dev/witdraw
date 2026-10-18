@@ -22,7 +22,7 @@ case class TraceEntry[T <: Tuple, V](
   * tr(Sigma)        // the value of Sigma in this run, a Sigma.Value
   * }}}
   */
-final class Trace(val entries: Seq[TraceEntry[?, ?]]):
+final class Trace(val entries: Seq[TraceEntry[?, ?]]) extends SiteValues:
   private val bySite: Map[SiteDef[?, ?], TraceEntry[?, ?]] =
     entries.map(e => e.site -> e).toMap
 

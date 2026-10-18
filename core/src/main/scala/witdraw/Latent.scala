@@ -49,6 +49,14 @@ final class Latent private (
   /** The latent sites, in the order in which the model samples them. */
   def sites: Seq[SiteDef[?, ?]] = slots.map(_.site)
 
+  /** The values of the latent sites at `params`, in the model's own space, e.g.
+    * for a [[Component]] to read them as a typed record.
+    */
+  def values(params: Params): SiteValues =
+    new SiteValues:
+      def apply[T <: Tuple, V](site: SiteDef[T, V]): Tensor[T, V] =
+        Params.apply(params)(site)
+
   /** Starting values for inference: the values of the traced run. */
   def init: Params = initWith()
 
