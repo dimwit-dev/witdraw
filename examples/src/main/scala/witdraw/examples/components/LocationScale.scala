@@ -142,9 +142,15 @@ object LocationScale:
     val zero = Tensor0(0f) **! truth
     val start = latent.initWith(observations(zero)*)
 
-    val nuts = NUTS(latent, stepSize = 0.02)
-    val (samples, infos) =
-      nuts.run(start, Key(1L)).drop(500).take(1000).toList.unzip
+    // The warmup tunes the step size and the mass matrix.
+    val (warmupKey, sampleKey) = Key(1L).split2()
+    val adapted = NUTS.adapt(latent, start, warmupKey, numSteps = 500)
+    println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
+    val (samples, infos) = adapted.sampler
+      .run(adapted.position, sampleKey)
+      .take(1000)
+      .toList
+      .unzip
     println(f"NUTS divergences: ${infos.count(_.isDivergent)} / ${samples.length}")
 
     // ---- posterior ----------------------------------------------------

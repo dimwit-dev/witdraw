@@ -215,10 +215,15 @@ object Mixture:
       Mu := Tensor1(Axis[Comp] -> 2).fromArray(Array(-1f, 1f))
     )
 
-    val nuts =
-      NUTS(posterior, stepSize = 0.05)
-    val (samples, infos) =
-      nuts.run(start, Key(3L)).drop(500).take(1000).toList.unzip
+    // The warmup tunes the step size and the mass matrix.
+    val (warmupKey, sampleKey) = Key(3L).split2()
+    val adapted = NUTS.adapt(posterior, start, warmupKey, numSteps = 500)
+    println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
+    val (samples, infos) = adapted.sampler
+      .run(adapted.position, sampleKey)
+      .take(1000)
+      .toList
+      .unzip
     println(
       f"NUTS divergences: ${infos.count(_.isDivergent)} / ${samples.size}"
     )

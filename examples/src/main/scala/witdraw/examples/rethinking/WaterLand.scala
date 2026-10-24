@@ -51,16 +51,18 @@ object WaterLandExample:
     )(conditioned)
     println(s"Latent sites: ${latent.sites.map(_.name).mkString(", ")}")
 
-    val burnIn = 500
+    val numWarmup = 500
     val nSamples = 2000
 
     val map = MAP(latent, start = Seq(WaterProp := Tensor0(0.5f)))
     println(f"MAP estimate: ${map(WaterProp).item}%.3f   (exact 6/9 = 0.667)")
 
-    val nuts = NUTS(latent, stepSize = 0.1)
-    val (nutsSamples, nutsInfos) = nuts
-      .run(map, Key(42))
-      .drop(burnIn)
+    // The warmup tunes the step size and the mass matrix, starting at the MAP.
+    val (warmupKey, sampleKey) = Key(42).split2()
+    val adapted = NUTS.adapt(latent, map, warmupKey, numSteps = numWarmup)
+    println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
+    val (nutsSamples, nutsInfos) = adapted.sampler
+      .run(adapted.position, sampleKey)
       .take(nSamples)
       .toList
       .unzip

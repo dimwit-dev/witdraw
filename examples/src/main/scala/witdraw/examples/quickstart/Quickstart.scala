@@ -72,12 +72,11 @@ object Quickstart:
       observe(Y := yData):
         model(xData)
 
-    val burnIn = 500
+    val (warmupKey, sampleKey) = nutsKey.split2()
+    val adapted = NUTS.adapt(latent, latent.init, warmupKey, numSteps = 1000)
     val nSamples = 5000
-    val nuts = NUTS(latent, stepSize = 0.05)
-    val (samples, infos) = nuts
-      .run(latent.init, nutsKey)
-      .drop(burnIn)
+    val (samples, infos) = adapted.sampler
+      .run(adapted.position, sampleKey)
       .take(nSamples)
       .toList
       .unzip

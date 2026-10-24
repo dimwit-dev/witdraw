@@ -253,10 +253,16 @@ object HMM:
       f"joint log-density (hmm_marginal + priors) at the true parameters = ${posterior.modelLogDensity(atTruth).item}%.3f"
     )
 
-    val nuts =
-      NUTS(posterior, stepSize = 0.05)
-    val (samples, infos) =
-      nuts.run(posterior.init, Key(3L)).drop(500).take(500).toList.unzip
+    // The warmup tunes the step size and the mass matrix.
+    val (warmupKey, sampleKey) = Key(3L).split2()
+    val adapted =
+      NUTS.adapt(posterior, posterior.init, warmupKey, numSteps = 500)
+    println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
+    val (samples, infos) = adapted.sampler
+      .run(adapted.position, sampleKey)
+      .take(500)
+      .toList
+      .unzip
     println(
       f"NUTS divergences: ${infos.count(_.isDivergent)} / ${samples.size}"
     )

@@ -238,22 +238,29 @@ Jacobian correction for the change of variables. We never see $z$ ourselves:
 ### Running NUTS
 
 NUTS is a variant of Hamiltonian Monte Carlo that chooses the length of each
-trajectory automatically. We still have to choose a step size: the sampler
-does not adapt it, so if you see many divergences or a low acceptance rate,
-reduce it. We discard the first draws (burn-in) while the chain moves away
-from its starting point.
+trajectory automatically. It still has two tuning parameters: the step size,
+and the mass matrix, which rescales each direction of the parameter space and
+works best when it approximates the posterior covariance. `NUTS.adapt` runs a
+warmup that tunes both (Stan's window adaptation, run by BlackJax). The warmup
+also moves the chain away from its starting point, so no draws need to be
+discarded afterwards: we start the tuned sampler where the warmup ended.
 
 ```scala
-val burnIn = 500
+val (warmupKey, sampleKey) = nutsKey.split2()
+val adapted = NUTS.adapt(latent, latent.init, warmupKey, numSteps = 1000)
 val nSamples = 2000
-val nuts = NUTS(latent, stepSize = 0.05)
-val (samples, infos) = nuts
-  .run(latent.init, nutsKey)
-  .drop(burnIn)
+val (samples, infos) = adapted.sampler
+  .run(adapted.position, sampleKey)
   .take(nSamples)
   .toList
   .unzip
 ```
+
+The tuned step size is `adapted.stepSize`. By default the mass matrix is
+diagonal, and `adapted.inverseMassMatrix` holds the estimated posterior
+variance of each parameter; `dense = true` estimates the full covariance
+instead, at the cost of a longer warmup. To choose the parameters yourself,
+use `NUTS(latent, stepSize = 0.05)`, optionally with an `InverseMassMatrix`.
 
 ### Checking the result
 
@@ -274,11 +281,11 @@ val (sigmaMean, sigmaSd) = summary(samples.map(_(Sigma)))
 
 ```scala
 println(s"alpha: mean $alphaMean, sd $alphaSd   (true $alphaTrue)")
-// alpha: mean 0.40087232, sd 0.069597654   (true 0.5)
+// alpha: mean 0.40120015, sd 0.067706324   (true 0.5)
 println(s"beta:  mean $betaMean, sd $betaSd   (true $betaTrue)")
-// beta:  mean [-1.4122269  2.0413063], sd [0.07261302 0.06949434]   (true [-1.5  2. ])
+// beta:  mean [-1.4109844  2.0416355], sd [0.07195111 0.07093444]   (true [-1.5  2. ])
 println(s"sigma: mean $sigmaMean, sd $sigmaSd   (true $sigmaTrue)")
-// sigma: mean 0.69023913, sd 0.05033151   (true 0.8)
+// sigma: mean 0.69089687, sd 0.05150727   (true 0.8)
 ```
 
 The true values lie within roughly two posterior standard deviations of the
@@ -292,7 +299,7 @@ run has no divergent transitions and a reasonably high acceptance rate:
 val divergences = infos.count(_.isDivergent)
 // divergences: Int = 0
 val meanAcceptance = infos.map(_.acceptanceRate).sum / infos.size
-// meanAcceptance: Double = 0.920905446305871
+// meanAcceptance: Double = 0.9160645568221808
 ```
 
 NUTS is not the only inference method: `MAP(latent)` finds the posterior mode,
@@ -469,7 +476,7 @@ well as here:
 val lsLatent = Latent.discover():
   observe(outcome.Y := yData):
     outcome(xData)
-// lsLatent: Latent = witdraw.Latent@7d42ddd7
+// lsLatent: Latent = witdraw.Latent@4bd6d1f8
 
 lsLatent.sites.map(_.name)
 // res8: Seq[String] = Vector(

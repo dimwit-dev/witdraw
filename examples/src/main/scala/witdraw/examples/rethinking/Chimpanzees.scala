@@ -127,13 +127,15 @@ object Chimpanzees:
         observe(PulledLeft := pulledLeft)(model)
     println(s"latent sites: ${posterior.sites.map(_.name).mkString(", ")}")
 
-    val burnIn = 2000
+    val numWarmup = 2000
     val nSamples = 5000
-    val nuts =
-      NUTS(posterior, stepSize = 0.1)
-    val (nutsSamples, nutsInfos) = nuts
-      .run(posterior.init, Key(42))
-      .drop(burnIn)
+    // The warmup tunes the step size and the mass matrix.
+    val (warmupKey, sampleKey) = Key(42).split2()
+    val adapted =
+      NUTS.adapt(posterior, posterior.init, warmupKey, numSteps = numWarmup)
+    println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
+    val (nutsSamples, nutsInfos) = adapted.sampler
+      .run(adapted.position, sampleKey)
       .take(nSamples)
       .toList
       .unzip
