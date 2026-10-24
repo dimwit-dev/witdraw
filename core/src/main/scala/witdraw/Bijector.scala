@@ -1,6 +1,7 @@
 package witdraw
 
 import dimwit.*
+import dimwit.linalg.LinearAlgebra
 import dimwit.tensor.Labels
 
 /** A differentiable bijection between an unconstrained value `z` and a value
@@ -147,3 +148,79 @@ object Bijector:
       def inverse(x: Tensor2[R, LX, Float32]) = x.vmap(Axis[R])(row.inverse)
       def logDetJac(z: Tensor2[R, LZ, Float32]) =
         z.vmap(Axis[R])(row.logDetJac).sum
+
+  /** Correlation matrices — Stan's `corr_matrix[d]`. `Z` is the `d(d-1)/2`
+    * unconstrained reals (`LZ` axis), one per entry below the diagonal, in row
+    * order: `(1,0), (2,0), (2,1), (3,0), …`.
+    *
+    * Each `z` becomes a canonical partial correlation `c = tanh(z)` in (-1, 1).
+    * Row `i` of the Cholesky factor `w` takes the fraction `c_ij` of the length
+    * it has left: `w_ij = c_ij · sqrt(1 - Σ_{k<j} w_ik²)`, and the diagonal is
+    * the rest, so every row has unit length. Then `x = w wᵀ`.
+    */
+  def correlationMatrix[LZ: Label, L: Label]
+      : Bijector[Tensor1[LZ, Float32], Tensor2[L, Prime[L], Float32]] =
+    val zAxis = Axis[LZ]
+    val one = Tensor0(1f)
+    val half = Tensor0(0.5f)
+
+    // the size d of the matrix, from the number n = d(d-1)/2 of entries
+    def size(n: Int) = ((1 + math.sqrt(1 + 8.0 * n)) / 2).round.toInt
+
+    // The rows of the Cholesky factor, entries 0..i, and log |det J|.
+    def cholesky(z: Tensor1[LZ, Float32]) =
+      val d = size(z.shape(zAxis))
+      val c = z.tanh
+      // log(1 - tanh(z)²) = 2·(log 2 - |z| - log(1 + e^{-2|z|})), the
+      // Jacobian of tanh, written to stay finite for large |z|
+      val absZ = z.abs
+      val log1pExp = ((absZ *! Tensor0(-2f)).exp +! one).log
+      var logDet =
+        ((Tensor0(math.log(2).toFloat) -! absZ - log1pExp) *! Tensor0(2f)).sum
+      var index = 0
+      val rows = Vector.newBuilder[Vector[Tensor0[Float32]]]
+      val logDiag = Array.fill(d)(Tensor0(0f)) // log w_jj
+      for i <- 0 until d do
+        var left = one // 1 - Σ_{k<j} w_ik²
+        val row = Vector.newBuilder[Tensor0[Float32]]
+        for j <- 0 until i do
+          val w = c.select(zAxis.at(index)) * left.sqrt
+          index += 1
+          // ∂w_ij/∂c_ij = sqrt(left), ∂x_ij/∂w_ij = w_jj
+          logDet = logDet + half * left.log + logDiag(j)
+          left = left - w * w
+          row += w
+        logDiag(i) = half * left.log
+        row += left.sqrt
+        rows += row.result()
+      (rows.result(), logDet)
+
+    new Bijector[Tensor1[LZ, Float32], Tensor2[L, Prime[L], Float32]]:
+      def forward(z: Tensor1[LZ, Float32]) =
+        val (w, _) = cholesky(z)
+        val d = w.size
+        def entry(i: Int, j: Int) =
+          if i == j then one
+          else (0 to math.min(i, j)).map(k => w(i)(k) * w(j)(k)).reduce(_ + _)
+        stack(
+          (0 until d).map(i =>
+            stack((0 until d).map(j => entry(i, j)), Axis[Prime[L]])
+          ),
+          Axis[L]
+        )
+
+      def inverse(x: Tensor2[L, Prime[L], Float32]) =
+        val d = x.shape(Axis[L])
+        val w = LinearAlgebra.cholesky(x)
+        def at(i: Int, j: Int) = w(Axis[L].at(i))(Axis[Prime[L]].at(j))
+        val zs =
+          for
+            i <- 1 until d
+            j <- 0 until i
+          yield
+            val left = (0 until j).foldLeft(one)((acc, k) => acc - at(i, k) * at(i, k))
+            val c = at(i, j) / left.sqrt
+            ((one + c) / (one - c)).log * half // atanh(c)
+        stack(zs, zAxis)
+
+      def logDetJac(z: Tensor1[LZ, Float32]) = cholesky(z)._2

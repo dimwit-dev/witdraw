@@ -1,11 +1,12 @@
 package witdraw.examples.rethinking
 
 import dimwit.*
+import dimwit.tensor.Labels
 import witling.DataFrame
 import java.io.File
 import dimwit.stats.HalfCauchy
 import dimwit.stats.Distribution
-import witdraw.Site
+import witdraw.{Bijector, Constraint, Site}
 import dimwit.stats.Normal
 import dimwit.stats.MVNormal
 import dimwit.stats.Bernoulli
@@ -64,118 +65,130 @@ object AdmissionEx:
             case "F" => 5)
       )
 
-    val nDepts = dfCleaned.cols.Dept.toSet.size
+    // Each row counts the applications with one outcome, gender and
+    // department; expand them into one case per application.
+    val rows = dfCleaned.cols.Freq.toArray.indices.flatMap: i =>
+      Seq.fill(dfCleaned.cols.Freq.toArray(i))(i)
+    def perCase(col: Array[Int]): Seq[Int] = rows.map(col)
+    val admitted = perCase(dfCleaned.cols.Admit.toArray)
+    val isMale = perCase(dfCleaned.cols.Gender.toArray)
+    val deptIndex = perCase(dfCleaned.cols.Dept.toArray)
+    val depts = Seq("A", "B", "C", "D", "E", "F")
+    val nDepts = depts.size
+    println(s"${rows.size} applications in ${nDepts} departments")
 
-    trait Case derives Label // Each row in the dataset is a case
-    trait Dept derives Label // Each department is a category
-    trait AB derives Label // For the two parameters alpha and beta
+    trait Case derives Label // one application
+    trait Dept derives Label // a department
+    trait AB derives Label // the intercept (0) and the slope for male (1)
+    trait RZ derives Label // the unconstrained correlation
 
-    object Beta extends Site[Tensor0[Float32]] // The global slope parameter
-    object BetaDept
-        extends Site[
-          Tensor1[Dept, Float32]
-        ] // the slope parameter per department
     object Alpha
-        extends Site[Tensor0[Float32]] // The global intercept parameter
+        extends Site[Tensor0[Float32]] // the mean of the intercepts
+    object Beta extends Site[Tensor0[Float32]] // the mean of the slopes
     object AlphaDept
+        extends Site[Tensor1[Dept, Float32]] // the intercept per department
+    object BetaDept
+        extends Site[Tensor1[Dept, Float32]] // the slope per department
+    object Sigma
         extends Site[
-          Tensor1[Dept, Float32]
-        ] // the intercept parameter per department
+          Tensor1[AB, Float32]
+        ] // the spread of the intercepts and of the slopes
     object R
         extends Site[
           Tensor2[AB, Prime[AB], Float32]
-        ] // The correlation matrix for the multivariate normal distribution
+        ] // the correlation of intercept and slope
     object DeptAB
         extends Site[
           Tensor2[Dept, AB, Float32]
-        ] // The bivariate normal distribution connecting the alpha and beta parameters per department
-
-    // object AdmissionProb extends Site[Tensor1[Case, Prob]]
+        ] // intercept and slope per department, from a bivariate normal
     object Admission extends Site[Tensor1[Case, Bool]]
 
-    val depts = dfCleaned.cols.Dept.toSet.toList.sorted
-    val deptIndex = dfCleaned.cols.Dept.map(dept => depts.indexOf(dept))
-    val male = Tensor1(Axis[Case]).fromArray(dfCleaned.cols.Gender.toArray)
+    val male = Tensor1(Axis[Case]).fromArray(isMale.map(_.toFloat).toArray)
 
     case class Result(
         alphaDept: AlphaDept.Value,
         betaDept: BetaDept.Value
     )
 
+    // McElreath's varying intercepts and slopes model of the admissions:
+    // logit p = alphaDept + betaDept * male, where the pairs
+    // (alphaDept, betaDept) are bivariate normal around (alpha, beta).
     val model: ProbProg[Result] =
       val alpha = Alpha ~ Normal(0f, 10f)
       val beta = Beta ~ Normal(0f, 1f)
-
-      // this is wrong
-      val mu_ab = stack(Seq(Tensor0(0f), Tensor0(0f)), Axis[AB])
-      val sigma_ab = stack(Seq(Tensor0(1f), Tensor0(1f)), Axis[AB])
+      val sigma = Sigma ~ HalfCauchy(
+        Tensor1(Axis[AB] -> 2).fill(0f),
+        Tensor1(Axis[AB] -> 2).fill(2f)
+      )
       val r = R ~ LKJ(Tensor0(2f), Shape(Axis[AB] -> 2, Axis[Prime[AB]] -> 2))
 
-      val cov_ab = sigma_ab.outerProduct(sigma_ab) * r
-      val mvDist = MVNormal(mu_ab, cov_ab)
+      val muAB = stack(Seq(alpha, beta), Axis[AB])
+      val covAB = sigma.outerProduct(sigma) * r
+      val perDept = new IndependentMultivariateDist[Dept, AB](
+        Axis[Dept] -> nDepts,
+        MVNormal(muAB, covAB)
+      )
+      val abPerDept = DeptAB ~ perDept
 
-      val nDept = 10
-      val indepMVNormal =
-        new IndependentMultivariateDist[Dept, AB](Axis[Dept] -> nDepts, mvDist)
-
-      // Sample per department a length-2 vector [alphaDept, betaDept]
-      // Shape: Tensor2[Dept, AB, Float32]
-
-      val abPerDept = DeptAB ~ indepMVNormal
-
-      // Split that tensor into separate alphaDept and betaDept along AB
-      val alphaDeptValues =
-        abPerDept.select(Axis[AB].at(0)) // Tensor1[Dept, Float32]
-      val betaDeptValues =
-        abPerDept.select(Axis[AB].at(1)) // Tensor1[Dept, Float32]
+      val alphaDeptValues = abPerDept.select(Axis[AB].at(0))
+      val betaDeptValues = abPerDept.select(Axis[AB].at(1))
 
       val alphaPerCase: Tensor1[Case, Float32] =
         alphaDeptValues.relabelTo(Axis[Case]).select(Axis[Case].at(deptIndex))
       val betaPerCase: Tensor1[Case, Float32] =
         betaDeptValues.relabelTo(Axis[Case]).select(Axis[Case].at(deptIndex))
-      val admissionProb = Prob(
-        Tensor.sigmoid(
-          alpha +! alphaPerCase + betaPerCase * male.asType(VType[Float32])
-        )
-      )
+      val admissionProb =
+        Prob(Tensor.sigmoid(alphaPerCase + betaPerCase * male))
       val admission = Admission ~ Bernoulli(admissionProb)
       Result(alphaDeptValues, betaDeptValues)
 
-    trait Sample derives Label
-    // val pp = Key(42L)
-    //   .splitvmap(Axis[Sample] -> 1000)(k => ForwardSampler.run(k)(model))
-    //   .flatten
-    //   .relabelTo(Axis[Sample])
-    //   .asType(VType[Float32])
+    val admission = Tensor1(Axis[Case]).fromArray(admitted.map(_ == 1).toArray)
 
-    // Plotting.display(Plotting.plotHistogram(pp, Some("Admission Probability")))
-
-    val admission = Tensor1(Axis[Case] -> dfCleaned.size).fromArray(
-      dfCleaned.cols.Admit.toArray.map(x => if x == 1 then true else false)
-    )
-
-    // The latent sites are Alpha, Beta, R and DeptAB; the per-department
-    // intercepts and slopes are slices of DeptAB. R is a correlation matrix,
-    // which would need a correlation (Cholesky) bijector; it is sampled
-    // unconstrained for now.
-    val posterior = Latent.discover():
+    // The latent sites are Alpha, Beta, Sigma, R and DeptAB; the intercepts
+    // and slopes per department are the columns of DeptAB. The spreads are
+    // sampled on the log scale, and R through the correlation bijector, so it
+    // stays a correlation matrix.
+    val posterior = Latent.discover(
+      Constraint(Sigma, Bijector.exp),
+      Constraint(R, Bijector.correlationMatrix[RZ, AB])
+    ):
       observe(Admission := admission)(model)
     println(s"latent sites: ${posterior.sites.map(_.name).mkString(", ")}")
-    val burnIn = 200
-    val nSamples = 200
-    println("starting sampling")
-    val nuts =
-      NUTS(posterior, stepSize = 0.1)
-    val (nutsSamples, nutsInfos) = nuts
-      .run(posterior.init, Key(42))
-      .drop(burnIn)
+
+    val numWarmup = 1000
+    val nSamples = 1000
+    // The warmup tunes the step size and the mass matrix.
+    val (warmupKey, sampleKey) = Key(42).split2()
+    val adapted =
+      NUTS.adapt(posterior, posterior.init, warmupKey, numSteps = numWarmup)
+    println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
+    val (nutsSamples, nutsInfos) = adapted.sampler
+      .run(adapted.position, sampleKey)
       .take(nSamples)
       .toList
       .unzip
-    println(" done sampling")
-    val deptAB = stack(nutsSamples.map(_(DeptAB)), Axis[Sample])
-    val alphaDepts = deptAB.select(Axis[AB].at(0))
-    val betaDepts = deptAB.select(Axis[AB].at(1))
+    println(s"NUTS divergences: ${nutsInfos.count(_.isDivergent)} / $nSamples")
 
-    println(f"mean alpha: ${alphaDepts.mean(Axis[Sample])}")
-    println(f"mean beta ${betaDepts.mean(Axis[Sample])}")
+    trait Sample derives Label
+    def summary[T <: Tuple: Labels](draws: List[Tensor[T, Float32]]) =
+      val stacked = stack(draws, Axis[Sample])
+      (stacked.mean(Axis[Sample]), stacked.std(Axis[Sample]))
+
+    val (alphaMean, alphaSd) = summary(nutsSamples.map(_(Alpha)))
+    val (betaMean, betaSd) = summary(nutsSamples.map(_(Beta)))
+    val (sigmaMean, _) = summary(nutsSamples.map(_(Sigma)))
+    val (rMean, _) = summary(nutsSamples.map(_(R)))
+    val (deptMean, deptSd) = summary(nutsSamples.map(_(DeptAB)))
+    println(f"alpha: mean ${alphaMean.item}%6.2f  sd ${alphaSd.item}%5.2f")
+    println(f"beta:  mean ${betaMean.item}%6.2f  sd ${betaSd.item}%5.2f")
+    println(s"sigma (intercept, slope): $sigmaMean")
+    println(
+      f"correlation of intercept and slope: ${rMean(Axis[AB].at(0))(Axis[Prime[AB]].at(1)).item}%.2f"
+    )
+    println("per department   intercept        slope for male")
+    for (dept, d) <- depts.zipWithIndex do
+      def at(m: Tensor2[Dept, AB, Float32], ab: Int) =
+        m(Axis[Dept].at(d))(Axis[AB].at(ab)).item
+      println(
+        f"  $dept             ${at(deptMean, 0)}%6.2f (sd ${at(deptSd, 0)}%4.2f)   ${at(deptMean, 1)}%6.2f (sd ${at(deptSd, 1)}%4.2f)"
+      )

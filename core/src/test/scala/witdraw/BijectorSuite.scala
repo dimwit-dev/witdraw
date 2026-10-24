@@ -54,6 +54,32 @@ class BijectorSuite extends munit.FunSuite:
   test("ordered"):
     check(onC(Bijector.ordered[A]), n = 4)
 
+  test("correlationMatrix, on the entries below the diagonal"):
+    trait L derives Label
+    val b = Bijector.correlationMatrix[A, L]
+    for d <- Seq(2, 3, 4) do
+      def below(x: Tensor2[L, Prime[L], Float32]): Tensor1[C, Float32] =
+        stack(
+          for
+            i <- 1 until d
+            j <- 0 until i
+          yield x(Axis[L].at(i))(Axis[Prime[L]].at(j)),
+          Axis[C]
+        )
+      for seed <- 0 until 3 do
+        val z = randomZ(d * (d - 1) / 2, seed) *! Tensor0(2f)
+        val x = b.forward(z)
+        // symmetric, unit diagonal, positive definite
+        def at(i: Int, j: Int) = x(Axis[L].at(i))(Axis[Prime[L]].at(j)).item
+        for i <- 0 until d; j <- 0 until d do
+          val expected = if i == j then 1f else at(j, i)
+          assertEqualsFloat(at(i, j), expected, 1e-5f, s"d $d: x($i, $j)")
+        assert(det(x).item > 0f, s"d $d seed $seed: det ${det(x).item}")
+        val expected = logAbsDetJacobian(z => below(b.forward(z)))(z)
+        assertEqualsFloat(b.logDetJac(z).item, expected, 1e-3f, s"d $d seed $seed")
+        val roundTrip = (b.inverse(x) - z).abs.max.item
+        assert(roundTrip < 1e-3f, s"d $d: inverse(forward(z)) differs by $roundTrip")
+
   test("simplexStickBreaking, on the first k-1 coordinates of the simplex"):
     for k <- Seq(2, 3, 5) do
       check(
