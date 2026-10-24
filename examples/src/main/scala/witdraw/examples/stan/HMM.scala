@@ -110,24 +110,25 @@ object HMM:
       val nT = y.shape(Axis[Time])
 
       // log_omega[i, n] = normal_lpdf(y[n] | mu[i], sigma)
-      val muGrid: Tensor2[State, Time, Float32] =
-        stack(Seq.fill(nT)(mu), Axis[Time]).transpose
-      val yGrid: Tensor2[State, Time, Float32] =
-        stack(Seq.fill(nStates)(y), Axis[State])
+      val grid = Shape(Axis[State] -> mu.shape(Axis[State]), Axis[Time] -> nT)
       val logOmega: Tensor2[State, Time, Float32] =
-        Normal.isotropic(muGrid, sigma).elementWiseLogProb(yGrid).asFloat
+        Normal
+          .isotropic(mu.broadcastTo(grid), sigma)
+          .elementWiseLogProb(y.broadcastTo(grid))
+          .asFloat
 
-      // forward recursion, all in log space
+      // forward recursion, all in log space: a loop over the time steps after
+      // the first, compiled once however long the sequence is
       val logGamma: Tensor2[State, Prime[State], Float32] = gamma.log
-      var logAlpha: Tensor1[State, Float32] =
+      val logAlpha0: Tensor1[State, Float32] =
         rho.log + logOmega.select(Axis[Time].at(0))
-      var t = 1
-      while t < nT do
-        // logPred[j] = logsumexp_i ( logAlpha[i] + logGamma[i, j] )
-        val logPred: Tensor1[State, Float32] =
-          logsumexp(logGamma +! logAlpha, Axis[State]).relabelTo(Axis[State])
-        logAlpha = logPred + logOmega.select(Axis[Time].at(t))
-        t += 1
+      val (logAlpha, _) =
+        scan(Axis[Time])(logAlpha0, logOmega.select(Axis[Time].at(1 until nT))):
+          (logAlpha, logOmegaT) =>
+            // logPred[j] = logsumexp_i ( logAlpha[i] + logGamma[i, j] )
+            val logPred: Tensor1[State, Float32] =
+              logsumexp(logGamma +! logAlpha, Axis[State]).relabelTo(Axis[State])
+            (logPred + logOmegaT, ())
 
       LogProb(logsumexp(logAlpha))
 
