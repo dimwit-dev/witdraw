@@ -33,8 +33,8 @@ object AR1:
 
     override def logProb(y: Tensor1[Time, Float32]): Tensor0[LogProb] =
       val len = y.shape(Axis[Time])
-      val yLag = y.slice(Axis[Time].at(0 until len - 1)) // y[1 .. N-1]
-      val yLead = y.slice(Axis[Time].at(1 until len)) // y[2 .. N]
+      val yLag = y.select(Axis[Time].at(0 until len - 1)) // y[1 .. N-1]
+      val yLead = y.select(Axis[Time].at(1 until len)) // y[2 .. N]
       Normal.isotropic(alpha +! (beta *! yLag), sigma).logProb(yLead)
 
     override def sample(key: Key): Tensor1[Time, Float32] =

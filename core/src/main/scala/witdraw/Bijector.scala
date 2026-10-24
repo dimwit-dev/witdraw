@@ -68,7 +68,7 @@ object Bijector:
         if k <= 1 then z
         else
           val incrs = concatenate(
-            Seq(z.slice(axis.at(0 until 1)), z.slice(axis.at(1 until k)).exp),
+            Seq(z.select(axis.at(0 until 1)), z.select(axis.at(1 until k)).exp),
             axis
           )
           incrs.cumsum(axis)
@@ -77,12 +77,12 @@ object Bijector:
         if k <= 1 then x
         else
           val gaps =
-            x.slice(axis.at(1 until k)) - x.slice(axis.at(0 until k - 1))
-          concatenate(Seq(x.slice(axis.at(0 until 1)), gaps.log), axis)
+            x.select(axis.at(1 until k)) - x.select(axis.at(0 until k - 1))
+          concatenate(Seq(x.select(axis.at(0 until 1)), gaps.log), axis)
       def logDetJac(z: Tensor1[L, Float32]) =
         val k = z.shape(axis)
         if k <= 1 then Tensor0(0f)
-        else z.slice(axis.at(1 until k)).sum // ∑_{j≥1} z_j
+        else z.select(axis.at(1 until k)).sum // ∑_{j≥1} z_j
 
   /** Stick-breaking simplex map — Stan's `simplex[k]`. `Z` is `k-1`
     * unconstrained reals (`LZ` axis), `X` is a `k`-vector on the simplex (`LC`
@@ -108,7 +108,7 @@ object Bijector:
       val zeta = Tensor.sigmoid(z + offsets(n))
       val leftAfter = (one -! zeta).cumprod(zAxis)
       val leftBefore = concatenate(
-        Seq(Tensor1(zAxis -> 1).fill(1f), leftAfter.slice(zAxis.at(0 until n - 1))),
+        Seq(Tensor1(zAxis -> 1).fill(1f), leftAfter.select(zAxis.at(0 until n - 1))),
         zAxis
       )
       (zeta, leftBefore, leftAfter)
@@ -118,14 +118,14 @@ object Bijector:
         val n = z.shape(zAxis)
         val (zeta, leftBefore, leftAfter) = fractions(z)
         concatenate(
-          Seq(leftBefore * zeta, leftAfter.slice(zAxis.at(n - 1 until n)))
+          Seq(leftBefore * zeta, leftAfter.select(zAxis.at(n - 1 until n)))
             .map(_.relabelTo(cAxis)),
           cAxis
         )
 
       def inverse(x: Tensor1[LC, Float32]) =
         val n = x.shape(cAxis) - 1
-        val pieces = x.slice(cAxis.at(0 until n)).relabelTo(zAxis)
+        val pieces = x.select(cAxis.at(0 until n)).relabelTo(zAxis)
         val leftBefore = (one -! pieces.cumsum(zAxis)) + pieces
         val zeta = pieces / leftBefore
         (zeta / (one -! zeta)).log - offsets(n) // logit(ζ) - offset

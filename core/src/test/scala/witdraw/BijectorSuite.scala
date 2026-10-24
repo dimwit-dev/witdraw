@@ -59,5 +59,5 @@ class BijectorSuite extends munit.FunSuite:
       check(
         Bijector.simplexStickBreaking[A, C],
         n = k - 1,
-        square = x => x.slice(Axis[C].at(0 until k - 1))
+        square = x => x.select(Axis[C].at(0 until k - 1))
       )

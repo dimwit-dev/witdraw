@@ -120,13 +120,13 @@ object HMM:
       // forward recursion, all in log space
       val logGamma: Tensor2[State, Prime[State], Float32] = gamma.log
       var logAlpha: Tensor1[State, Float32] =
-        rho.log + logOmega.slice(Axis[Time].at(0))
+        rho.log + logOmega.select(Axis[Time].at(0))
       var t = 1
       while t < nT do
         // logPred[j] = logsumexp_i ( logAlpha[i] + logGamma[i, j] )
         val logPred: Tensor1[State, Float32] =
           logsumexp(logGamma +! logAlpha, Axis[State]).relabelTo(Axis[State])
-        logAlpha = logPred + logOmega.slice(Axis[Time].at(t))
+        logAlpha = logPred + logOmega.select(Axis[Time].at(t))
         t += 1
 
       LogProb(logsumexp(logAlpha))
@@ -136,8 +136,8 @@ object HMM:
       var state: Tensor0[Int32] = Categorical(Prob(rho)).sample(kInit)
       val ys = kSeq.split(n).map { k =>
         val (kEmit, kTrans) = k.split2()
-        val yt = Normal(mu.slice(Axis[State].at(state)), sigma).sample(kEmit)
-        val row = gamma.slice(Axis[State].at(state)) // Tensor1[Prime[State], _]
+        val yt = Normal(mu.select(Axis[State].at(state)), sigma).sample(kEmit)
+        val row = gamma.select(Axis[State].at(state)) // Tensor1[Prime[State], _]
         state = Categorical(Prob(row)).sample(kTrans)
         yt
       }

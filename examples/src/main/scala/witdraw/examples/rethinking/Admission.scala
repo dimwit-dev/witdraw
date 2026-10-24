@@ -125,14 +125,14 @@ object AdmissionEx:
 
       // Split that tensor into separate alphaDept and betaDept along AB
       val alphaDeptValues =
-        abPerDept.slice(Axis[AB].at(0)) // Tensor1[Dept, Float32]
+        abPerDept.select(Axis[AB].at(0)) // Tensor1[Dept, Float32]
       val betaDeptValues =
-        abPerDept.slice(Axis[AB].at(1)) // Tensor1[Dept, Float32]
+        abPerDept.select(Axis[AB].at(1)) // Tensor1[Dept, Float32]
 
       val alphaPerCase: Tensor1[Case, Float32] =
-        alphaDeptValues.relabelTo(Axis[Case]).slice(Axis[Case].at(deptIndex))
+        alphaDeptValues.relabelTo(Axis[Case]).select(Axis[Case].at(deptIndex))
       val betaPerCase: Tensor1[Case, Float32] =
-        betaDeptValues.relabelTo(Axis[Case]).slice(Axis[Case].at(deptIndex))
+        betaDeptValues.relabelTo(Axis[Case]).select(Axis[Case].at(deptIndex))
       val admissionProb = Prob(
         Tensor.sigmoid(
           alpha +! alphaPerCase + betaPerCase * male.asType(VType[Float32])
@@ -174,8 +174,8 @@ object AdmissionEx:
       .unzip
     println(" done sampling")
     val deptAB = stack(nutsSamples.map(_(DeptAB)), Axis[Sample])
-    val alphaDepts = deptAB.slice(Axis[AB].at(0))
-    val betaDepts = deptAB.slice(Axis[AB].at(1))
+    val alphaDepts = deptAB.select(Axis[AB].at(0))
+    val betaDepts = deptAB.select(Axis[AB].at(1))
 
     println(f"mean alpha: ${alphaDepts.mean(Axis[Sample])}")
     println(f"mean beta ${betaDepts.mean(Axis[Sample])}")

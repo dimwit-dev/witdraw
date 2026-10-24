@@ -9,12 +9,16 @@ ThisBuild / resolvers += "Central Portal Snapshots" at "https://central.sonatype
 ThisBuild / sonatypeCredentialHost := "central.sonatype.com"
 ThisBuild / publishTo := {
   if (isSnapshot.value)
-    Some("central-snapshots" at "https://central.sonatype.com/repository/maven-snapshots/")
+    Some(
+      "central-snapshots" at "https://central.sonatype.com/repository/maven-snapshots/"
+    )
   else
     sonatypePublishToBundle.value
 }
 ThisBuild / homepage := Some(url("https://github.com/dimwit-dev/witdraw"))
-ThisBuild / licenses := List("Apache-2.0" -> url("https://www.apache.org/licenses/LICENSE-2.0"))
+ThisBuild / licenses := List(
+  "Apache-2.0" -> url("https://www.apache.org/licenses/LICENSE-2.0")
+)
 ThisBuild / scmInfo := Some(
   ScmInfo(
     url("https://github.com/dimwit-dev/witdraw"),
@@ -31,7 +35,10 @@ ThisBuild / developers := List(
 )
 
 // Publishes `core` only. `examples` depends on witling and plotwit, which are not published.
-addCommandAlias("sonaUploadCore", "; project core; sonatypeCentralUpload; project root")
+addCommandAlias(
+  "sonaUploadCore",
+  "; project core; sonatypeCentralUpload; project root"
+)
 
 import scala.concurrent.duration.DurationInt
 import lmcoursier.definitions.CachePolicy
@@ -56,7 +63,7 @@ lazy val core = (project in file("core"))
     name := "witdraw-core",
     description := "Typed probabilistic programming for Scala 3, built on DimWit",
     libraryDependencies ++= Seq(
-      "ch.contrafactus" %% "dimwit-core" % "0.2.0",
+      "ch.contrafactus" %% "dimwit-core" % "0.3-SNAPSHOT",
       "org.scalameta" %% "munit" % "1.0.0" % Test
     ),
     Compile / packageSrc / publishArtifact := true,
@@ -71,7 +78,7 @@ lazy val examples = (project in file("examples"))
     libraryDependencies ++= Seq(
       "org.scala-lang" %% "toolkit" % "0.9.1",
       "ch.contrafactus" %% "witling-core" % "0.1-SNAPSHOT" changing (),
-      "ch.contrafactus" %% "plotwit-core" % "0.2-SNAPSHOT" changing ()
+      "ch.contrafactus" %% "plotwit-core" % "0.3-SNAPSHOT" changing ()
     ),
     fork := true,
     // Don't publish examples

@@ -141,8 +141,8 @@ object MissingData:
       .sample(ky)
 
     // Rows are already in "observed then missing" order: hide x on the tail.
-    val xObs = xAll.slice(Axis[Data].at(0 until nObs))
-    val xMisTrue = xAll.slice(Axis[Data].at(nObs until n)).relabelTo(Axis[Missing])
+    val xObs = xAll.select(Axis[Data].at(0 until nObs))
+    val xMisTrue = xAll.select(Axis[Data].at(nObs until n)).relabelTo(Axis[Missing])
 
     // ---- inference --------------------------------------------------
     // The latent sites (alpha, beta, sigma, muX, sigmaX and the imputed

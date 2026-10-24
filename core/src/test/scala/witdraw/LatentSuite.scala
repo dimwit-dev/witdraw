@@ -72,7 +72,7 @@ class LatentSuite extends munit.FunSuite:
     val locs = Tensor1(Axis[Comp]).fromArray(Array(-1f, 0f, 2f))
     val p = mixture.initWith(Weights := weights, Locs := locs)
     assertEqualsFloat(p(Weights).sum.item, 1f, 1e-5f)
-    assertEqualsFloat(p(Weights).slice(Axis[Comp].at(1)).item, 0.5f, 1e-5f)
+    assertEqualsFloat(p(Weights).select(Axis[Comp].at(1)).item, 0.5f, 1e-5f)
     val expected = ModelScorer.run:
       observe(Weights := weights, Locs := locs)(mixturePrior)
     assertEqualsFloat(mixture.modelLogDensity(p).item, expected.item, 1e-3f)

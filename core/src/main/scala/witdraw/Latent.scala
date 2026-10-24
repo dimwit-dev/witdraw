@@ -167,7 +167,7 @@ object Latent:
       logDetJac: Flat => Tensor0[Float32]
   ):
     def part(params: Flat): Flat =
-      params.slice(Axis[LatentDim].at(offset until offset + size))
+      params.select(Axis[LatentDim].at(offset until offset + size))
 
     def valueIn(params: Flat): Tensor[T, V] = fromFlat(part(params))
     def observationIn(params: Flat): Observation[T, V] =

@@ -97,7 +97,7 @@ object Chimpanzees:
       val chimpBaselinePerTrial: Tensor1[Trial, Float32] =
         chimpIntercept
           .relabelTo(Axis[Trial])
-          .slice(Axis[Trial].at(chimpIndexPerTrial))
+          .select(Axis[Trial].at(chimpIndexPerTrial))
 
       // Effect of the prosocial option's side
       val prosocialEffect = ProsocialEffect ~ Normal(Tensor0(0f), Tensor0(10f))
@@ -168,14 +168,14 @@ object Chimpanzees:
 
     val chimp0Plot = histogramPlot(
       stack(
-        nutsSamples.map(_(ChimpIntercept).slice(Axis[Chimp].at(0))),
+        nutsSamples.map(_(ChimpIntercept).select(Axis[Chimp].at(0))),
         Axis[Trial]
       ),
       _.title := "Posterior of chimpIntercept[0]"
     )
     val chimp1Plot = histogramPlot(
       stack(
-        nutsSamples.map(_(ChimpIntercept).slice(Axis[Chimp].at(1))),
+        nutsSamples.map(_(ChimpIntercept).select(Axis[Chimp].at(1))),
         Axis[Trial]
       ),
       _.title := "Posterior of chimpIntercept[1]"

@@ -121,7 +121,7 @@ object Mixture:
       val ys = key.split(n).map { kk =>
         val (kz, ky) = kk.split2()
         val z = Categorical(Prob(theta)).sample(kz)
-        Normal(mu.slice(Axis[Comp].at(z)), sigma.slice(Axis[Comp].at(z)))
+        Normal(mu.select(Axis[Comp].at(z)), sigma.select(Axis[Comp].at(z)))
           .sample(ky)
       }
       stack(ys, Axis[Data])

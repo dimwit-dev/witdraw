@@ -152,7 +152,7 @@ object OceanicExample:
 
     val p3 = histogramPlot(
       stack(
-        nutsSamples.map(_(SocietyIntercept).slice(Axis[Society].at(0))),
+        nutsSamples.map(_(SocietyIntercept).select(Axis[Society].at(0))),
         Axis[Sample]
       ),
       _.title := "Posterior of societyIntercept 0"
@@ -160,7 +160,7 @@ object OceanicExample:
 
     val p4 = histogramPlot(
       stack(
-        nutsSamples.map(_(SocietyIntercept).slice(Axis[Society].at(1))),
+        nutsSamples.map(_(SocietyIntercept).select(Axis[Society].at(1))),
         Axis[Sample]
       ),
       _.title := "Posterior of societyIntercept 1"
