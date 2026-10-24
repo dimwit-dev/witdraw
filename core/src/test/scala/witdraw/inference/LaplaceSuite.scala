@@ -8,6 +8,9 @@ class LaplaceSuite extends munit.FunSuite:
 
   override def beforeAll(): Unit = dimwit.initialize()
 
+  // sampling thousands of draws step by step takes close to munit's default 30 s
+  override val munitTimeout = scala.concurrent.duration.Duration(120, "s")
+
   trait Sample derives Label
 
   object Mu extends Site[Tensor0[Float32]]
@@ -21,11 +24,12 @@ class LaplaceSuite extends munit.FunSuite:
       Y ~ Normal.isotropic(Tensor1(Axis[Sample] -> 3).fill(0f) +! mu, 1f)
     val latent = Latent.discover()(observe(Y := yData)(model))
     // starts away from the mode, which init finds itself
-    val draws = Laplace(latent)
-      .run(latent.initWith(Mu := Tensor0(-2f)), Key(7))
-      .take(4000)
-      .map(_._1(Mu).item)
-      .toList
+    val laplace = Laplace(latent)
+    val start = latent.initWith(Mu := Tensor0(-2f))
+    val draws = laplace.sample(start, Key(7), 4000).map(_._1(Mu).item)
+    // the compiled loop gives the draws of the step-by-step one
+    val looped = laplace.run(start, Key(7)).take(20).map(_._1(Mu).item).toList
+    for (a, b) <- looped.zip(draws) do assertEqualsFloat(a, b, 1e-5f)
     val mean = draws.sum / draws.size
     val variance = draws.map(d => (d - mean) * (d - mean)).sum / draws.size
     assertEqualsFloat(mean, 0.375f, 0.03f)

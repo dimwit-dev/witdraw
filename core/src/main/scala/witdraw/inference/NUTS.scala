@@ -8,23 +8,59 @@ import dimwit.tensortree.TensorTree
 import me.shadaj.scalapy.py
 import me.shadaj.scalapy.py.SeqConverters
 
-/** The state of [[NUTS]]: BlackJax's state, and its compiled step function.
-  * `position` is decoded from BlackJax's state when asked for.
+/** The state of [[NUTS]]: the position, and the log-density and its gradient
+  * there, as in BlackJax's `HMCState`.
   */
-case class NUTSState[P: TensorTree](
-    private[witdraw] val raw: py.Dynamic,
-    private[witdraw] val jittedStep: py.Dynamic
+case class NUTSState[P](
+    position: P,
+    logDensity: Tensor0[Float32],
+    logDensityGrad: P
 ) extends KernelState[P]:
-  def position: P = TensorTree[P].fromPyTree(raw.position)
+  private[witdraw] def toPy(using tree: TensorTree[P]): py.Dynamic =
+    py.module("blackjax.mcmc.hmc")
+      .HMCState(
+        tree.toPyTree(position),
+        TensorTree[Tensor0[Float32]].toPyTree(logDensity),
+        tree.toPyTree(logDensityGrad)
+      )
 
-/** Diagnostics of one NUTS step. Each field is read from BlackJax only when
-  * asked for.
+object NUTSState:
+  given [P: TensorTree]: TensorTree[NUTSState[P]] = TensorTree.derived
+
+  private[witdraw] def fromPy[P](raw: py.Dynamic)(using
+      tree: TensorTree[P]
+  ): NUTSState[P] =
+    NUTSState(
+      tree.fromPyTree(raw.position),
+      TensorTree[Tensor0[Float32]].fromPyTree(raw.logdensity),
+      tree.fromPyTree(raw.logdensity_grad)
+    )
+
+/** Diagnostics of one NUTS step. They are kept as tensors, so that a step can
+  * run in a compiled loop, and each is read only when asked for.
   */
-case class NUTSInfo(private val raw: py.Dynamic):
-  lazy val acceptanceRate: Double = raw.acceptance_rate.item().as[Double]
-  lazy val numIntegrationSteps: Int = raw.num_integration_steps.item().as[Int]
-  lazy val isDivergent: Boolean = raw.is_divergent.item().as[Boolean]
-  lazy val energy: Double = raw.energy.item().as[Double]
+case class NUTSInfo(
+    private[witdraw] val acceptanceRateT: Tensor0[Float32],
+    private[witdraw] val numIntegrationStepsT: Tensor0[Int32],
+    private[witdraw] val isDivergentT: Tensor0[Bool],
+    private[witdraw] val energyT: Tensor0[Float32]
+):
+  def acceptanceRate: Double = acceptanceRateT.item.toDouble
+  def numIntegrationSteps: Int = numIntegrationStepsT.item
+  def isDivergent: Boolean = isDivergentT.item
+  def energy: Double = energyT.item.toDouble
+
+object NUTSInfo:
+  given TensorTree[NUTSInfo] = TensorTree.derived
+
+  private[witdraw] def fromPy(raw: py.Dynamic): NUTSInfo =
+    def leaf[T](x: py.Dynamic)(using tree: TensorTree[T]) = tree.fromPyTree(x)
+    NUTSInfo(
+      leaf[Tensor0[Float32]](raw.acceptance_rate),
+      leaf[Tensor0[Int32]](raw.num_integration_steps),
+      leaf[Tensor0[Bool]](raw.is_divergent),
+      leaf[Tensor0[Float32]](raw.energy)
+    )
 
 /** The inverse mass matrix of [[NUTS]]. The sampler works best when it
   * approximates the covariance of the target, which [[NUTS.adapt]] estimates.
@@ -82,10 +118,8 @@ case class NUTSAdaptation[P](
   * val (warmupKey, sampleKey) = key.split2()
   * val adapted = NUTS.adapt(latent, latent.init, warmupKey)
   * val draws = adapted.sampler
-  *   .run(adapted.position, sampleKey)
-  *   .take(2000)
+  *   .sample(adapted.position, sampleKey, 2000)
   *   .map(_._1)
-  *   .toList
   * draws.map(_(Sigma))
   * }}}
   *
@@ -124,18 +158,7 @@ object NUTS:
   )(
       logDensity: P => Tensor0[Float32]
   ): SamplingAlgorithm[P, NUTSState[P], NUTSInfo] =
-    val pyLogDensity = PyBridge.toPyFn(logDensity)
-    SamplingAlgorithm(
-      init = position =>
-        build(
-          pyLogDensity,
-          py.Any.from(stepSize),
-          inverseMassMatrix.toPy(position),
-          TensorTree[P].toPyTree(position).as[py.Dynamic]
-        )
-      ,
-      step = step[P]
-    )
+    sampler(PyBridge.toPyFn(logDensity), py.Any.from(stepSize), inverseMassMatrix)
 
   /** Runs Stan's window adaptation for the posterior of `latent`, starting
     * from `initial`: `numSteps` NUTS steps, during which the step size is
@@ -204,41 +227,39 @@ object NUTS:
           py.module("jax.flatten_util").ravel_pytree(pyPosition).bracketAccess(1)
         InverseMassMatrix.Diagonal(TensorTree[P].fromPyTree(unravel(pyInverseMass)))
 
-    val sampler = SamplingAlgorithm[P, NUTSState[P], NUTSInfo](
-      init = position =>
-        build(
-          pyLogDensity,
-          pyStepSize,
-          pyInverseMass,
-          TensorTree[P].toPyTree(position).as[py.Dynamic]
-        )
-      ,
-      step = step[P]
-    )
     NUTSAdaptation(
-      sampler = sampler,
+      sampler = sampler(pyLogDensity, pyStepSize, inverseMassMatrix),
       position = TensorTree[P].fromPyTree(pyPosition),
       stepSize = pyStepSize.item().as[Double],
       inverseMassMatrix = inverseMassMatrix,
       numDivergent = info.info.is_divergent.sum().item().as[Int]
     )
 
-  private def build[P: TensorTree](
+  /** The NUTS sampler for `pyLogDensity`. Its step is compiled, and it is
+    * traceable, so [[SamplingAlgorithm.sample]] can run it in a loop.
+    */
+  private def sampler[P: TensorTree](
       pyLogDensity: py.Dynamic,
       stepSize: py.Any,
-      inverseMassMatrix: py.Dynamic,
-      pyPosition: py.Dynamic
-  ): NUTSState[P] =
-    val nuts =
-      py.module("blackjax").nuts(pyLogDensity, stepSize, inverseMassMatrix)
-    NUTSState(nuts.init(pyPosition), py.module("jax").jit(nuts.step))
-
-  private def step[P: TensorTree](
-      key: Key,
-      state: NUTSState[P]
-  ): (NUTSState[P], NUTSInfo) =
-    val result = state.jittedStep(key.jaxKey, state.raw)
-    (
-      state.copy(raw = result.bracketAccess(0)),
-      NUTSInfo(result.bracketAccess(1))
+      inverseMassMatrix: InverseMassMatrix[P]
+  ): SamplingAlgorithm[P, NUTSState[P], NUTSInfo] =
+    val blackjax = py.module("blackjax")
+    val step = jit((key: Key, state: NUTSState[P]) =>
+      val nuts = blackjax.nuts(
+        pyLogDensity,
+        stepSize,
+        inverseMassMatrix.toPy(state.position)
+      )
+      val result = nuts.step(key.jaxKey, state.toPy)
+      (
+        NUTSState.fromPy[P](result.bracketAccess(0)),
+        NUTSInfo.fromPy(result.bracketAccess(1))
+      )
+    )
+    SamplingAlgorithm(
+      init = position =>
+        NUTSState.fromPy[P](
+          blackjax.mcmc.hmc.init(TensorTree[P].toPyTree(position), pyLogDensity)
+        ),
+      step = step
     )

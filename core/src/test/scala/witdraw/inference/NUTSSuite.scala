@@ -8,6 +8,9 @@ class NUTSSuite extends munit.FunSuite:
 
   override def beforeAll(): Unit = dimwit.initialize()
 
+  // sampling thousands of draws step by step takes close to munit's default 30 s
+  override val munitTimeout = scala.concurrent.duration.Duration(120, "s")
+
   object Narrow extends Site[Tensor0[Float32]]
   object Wide extends Site[Tensor0[Float32]]
 
@@ -17,7 +20,7 @@ class NUTSSuite extends munit.FunSuite:
 
   lazy val latent = Latent.discover()(model)
 
-  def moments(draws: List[Float]): (Float, Float) =
+  def moments(draws: Seq[Float]): (Float, Float) =
     val mean = draws.sum / draws.size
     (mean, draws.map(d => (d - mean) * (d - mean)).sum / draws.size)
 
@@ -35,9 +38,7 @@ class NUTSSuite extends munit.FunSuite:
     val (warmupKey, sampleKey) = Key(2).split2()
     val adapted = NUTS.adapt(latent, latent.init, warmupKey)
     val (draws, infos) = adapted.sampler
-      .run(adapted.position, sampleKey)
-      .take(2000)
-      .toList
+      .sample(adapted.position, sampleKey, 2000)
       .unzip
     val (narrowMean, narrowVar) = moments(draws.map(_(Narrow).item))
     val (wideMean, wideVar) = moments(draws.map(_(Wide).item))
@@ -69,4 +70,14 @@ class NUTSSuite extends munit.FunSuite:
     val nuts = NUTS(latent, 0.5, InverseMassMatrix.Diagonal(variances))
     val infos = nuts.run(latent.init, Key(5)).take(500).map(_._2).toList
     assertEquals(infos.count(_.isDivergent), 0)
+
+  test("sample gives the same draws as run, in one compiled loop"):
+    val nuts = NUTS(latent, 0.1)
+    val looped = nuts.run(latent.init, Key(6)).take(30).toList
+    val compiled = nuts.sample(latent.init, Key(6), 30)
+    assertEquals(compiled.size, 30)
+    for ((p1, i1), (p2, i2)) <- looped.zip(compiled) do
+      assertEqualsFloat(p1(Narrow).item, p2(Narrow).item, 1e-4f)
+      assertEqualsFloat(p1(Wide).item, p2(Wide).item, 1e-3f)
+      assertEquals(i1.numIntegrationSteps, i2.numIntegrationSteps)
 
