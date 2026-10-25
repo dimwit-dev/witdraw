@@ -113,6 +113,21 @@ final class Latent private (
       )
     concatenate(parts, Axis[LatentDim])
 
+  /** Random starting values for inference, as in Stan: every unconstrained
+    * value is drawn uniformly between `-radius` and `radius`. Since they are
+    * unconstrained, the values always lie inside the supports.
+    *
+    * Use it to start several chains from different positions, e.g.
+    * `key.split(4).map(latent.initRandom(_))`.
+    */
+  def initRandom(key: Random.Key, radius: Float = 2f): Params =
+    // the size from the slots: `init` fails when a traced value lies outside
+    // its constraint, which random values need not care about
+    val shape = Shape(Axis[LatentDim] -> slots.map(_.size).sum)
+    dimwit.stats
+      .Uniform(Tensor(shape).fill(-radius), Tensor(shape).fill(radius))
+      .sample(key)
+
   /** The log-density to sample from, e.g. with NUTS: the density of the
     * unconstrained values, which is [[modelLogDensity]] plus the log-Jacobian
     * of the transforms.

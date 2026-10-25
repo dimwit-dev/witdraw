@@ -45,7 +45,7 @@ tensors and distributions, and WitDraw itself:
 import dimwit.*
 import dimwit.stats.*
 import witdraw.*
-import witdraw.inference.NUTS
+import witdraw.inference.{Diagnostics, NUTS}
 ```
 
 Every program that uses dimwit must initialise the dimwit runtime first:
@@ -285,6 +285,34 @@ run has no divergent transitions and a reasonably high acceptance rate:
 val divergences = infos.count(_.isDivergent)
 val meanAcceptance = infos.map(_.acceptanceRate).sum / infos.size
 ```
+
+### Running several chains
+
+One chain cannot tell us whether it has explored the whole posterior. The
+standard check is to run several chains from different starting points and
+compare them. `latent.initRandom` draws a starting point (uniformly between -2
+and 2 in unconstrained space, as Stan does), and `NUTS.adaptChains` tunes each
+chain on its own. All chains then run side by side, in one compiled loop:
+
+```scala mdoc:silent
+val Seq(initKey, chainsWarmupKey, chainsSampleKey) = nutsKey.split(3)
+val starts = initKey.split(4).map(latent.initRandom(_))
+val adaptedChains = NUTS.adaptChains(latent, starts, chainsWarmupKey)
+val chains = adaptedChains.sample(chainsSampleKey, 1000).map(_.map(_._1))
+```
+
+`Diagnostics.rhat` compares the chains: values close to 1 mean they agree, and
+values above about 1.01 are a warning. `Diagnostics.ess` estimates how many
+independent draws the chains are worth. Both have the shape of the quantity,
+so `beta` gets one value per predictor:
+
+```scala mdoc
+Diagnostics.rhat(chains.map(_.map(_(Beta))))
+Diagnostics.ess(chains.map(_.map(_(Sigma))))
+```
+
+For a sampler with fixed settings, `sampler.sampleChains(starts, key, numDraws)`
+does the same without the warmup.
 
 NUTS is not the only inference method: `MAP(latent)` finds the posterior mode,
 and `Laplace(latent)` approximates the posterior by a Gaussian around its mode

@@ -45,7 +45,7 @@ tensors and distributions, and WitDraw itself:
 import dimwit.*
 import dimwit.stats.*
 import witdraw.*
-import witdraw.inference.NUTS
+import witdraw.inference.{Diagnostics, NUTS}
 ```
 
 Every program that uses dimwit must initialise the dimwit runtime first:
@@ -281,11 +281,11 @@ val (sigmaMean, sigmaSd) = summary(samples.map(_(Sigma)))
 
 ```scala
 println(s"alpha: mean $alphaMean, sd $alphaSd   (true $alphaTrue)")
-// alpha: mean 0.40120015, sd 0.067706324   (true 0.5)
+// alpha: mean 0.40220875, sd 0.06991693   (true 0.5)
 println(s"beta:  mean $betaMean, sd $betaSd   (true $betaTrue)")
-// beta:  mean [-1.4109844  2.0416355], sd [0.07195111 0.07093444]   (true [-1.5  2. ])
+// beta:  mean [-1.4135246  2.0418777], sd [0.07099658 0.06975138]   (true [-1.5  2. ])
 println(s"sigma: mean $sigmaMean, sd $sigmaSd   (true $sigmaTrue)")
-// sigma: mean 0.69089687, sd 0.05150727   (true 0.8)
+// sigma: mean 0.6903628, sd 0.051191546   (true 0.8)
 ```
 
 The true values lie within roughly two posterior standard deviations of the
@@ -299,8 +299,38 @@ run has no divergent transitions and a reasonably high acceptance rate:
 val divergences = infos.count(_.isDivergent)
 // divergences: Int = 0
 val meanAcceptance = infos.map(_.acceptanceRate).sum / infos.size
-// meanAcceptance: Double = 0.9160645568221808
+// meanAcceptance: Double = 0.9253197636604309
 ```
+
+### Running several chains
+
+One chain cannot tell us whether it has explored the whole posterior. The
+standard check is to run several chains from different starting points and
+compare them. `latent.initRandom` draws a starting point (uniformly between -2
+and 2 in unconstrained space, as Stan does), and `NUTS.adaptChains` tunes each
+chain on its own. All chains then run side by side, in one compiled loop:
+
+```scala
+val Seq(initKey, chainsWarmupKey, chainsSampleKey) = nutsKey.split(3)
+val starts = initKey.split(4).map(latent.initRandom(_))
+val adaptedChains = NUTS.adaptChains(latent, starts, chainsWarmupKey)
+val chains = adaptedChains.sample(chainsSampleKey, 1000).map(_.map(_._1))
+```
+
+`Diagnostics.rhat` compares the chains: values close to 1 mean they agree, and
+values above about 1.01 are a warning. `Diagnostics.ess` estimates how many
+independent draws the chains are worth. Both have the shape of the quantity,
+so `beta` gets one value per predictor:
+
+```scala
+Diagnostics.rhat(chains.map(_.map(_(Beta))))
+// res7: Tensor[Tuple1[Feature], Float32] = [0.99958324 0.9996927 ]
+Diagnostics.ess(chains.map(_.map(_(Sigma))))
+// res8: Tensor[EmptyTuple, Float32] = 4318.6504
+```
+
+For a sampler with fixed settings, `sampler.sampleChains(starts, key, numDraws)`
+does the same without the warmup.
 
 NUTS is not the only inference method: `MAP(latent)` finds the posterior mode,
 and `Laplace(latent)` approximates the posterior by a Gaussian around its mode
@@ -373,7 +403,7 @@ def logDensityAtTruth(m: ProbProg[Any]): Float =
   .item
 
 (logDensityAtTruth(model(xData)), logDensityAtTruth(regression(xData, prior(nFeatures))))
-// res7: Tuple2[Float, Float] = (-117.938705F, -117.938705F)
+// res9: Tuple2[Float, Float] = (-117.938705F, -117.938705F)
 ```
 
 Because the prior is a parameter of `regression`, trying a different prior
@@ -476,10 +506,10 @@ well as here:
 val lsLatent = Latent.discover():
   observe(outcome.Y := yData):
     outcome(xData)
-// lsLatent: Latent = witdraw.Latent@4bd6d1f8
+// lsLatent: Latent = witdraw.Latent@14f5d34f
 
 lsLatent.sites.map(_.name)
-// res8: Seq[String] = Vector(
+// res10: Seq[String] = Vector(
 //   "outcome.mean.Intercept",
 //   "outcome.mean.Weights",
 //   "outcome.logScale.Intercept",
@@ -527,11 +557,11 @@ val mode = outcome.values(lsLatent.values(MAP(lsLatent, start)))
 //   )
 // )
 mode.mean.weights
-// res9: Tensor[Tuple1[Feature], Float32] = [-1.4111495  2.0541945]
+// res11: Tensor[Tuple1[Feature], Float32] = [-1.4111495  2.0541945]
 mode.logScale.weights
-// res10: Tensor[Tuple1[Feature], Float32] = [ 0.0855608  -0.02117608]
+// res12: Tensor[Tuple1[Feature], Float32] = [ 0.0855608  -0.02117608]
 mode.logScale.intercept.exp
-// res11: Tensor[EmptyTuple, Float32] = 0.669063
+// res13: Tensor[EmptyTuple, Float32] = 0.669063
 ```
 
 The weights of the mean are close to `betaTrue`. The data was simulated

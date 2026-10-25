@@ -16,7 +16,7 @@ import witdraw.inference.NUTS
   * parameters {
   *   array[3] simplex[3] gamma_arr;  // rows of the transition matrix
   *   simplex[3] rho;                 // initial state distribution
-  *   vector[3] mu;                   // emission means
+  *   ordered[3] mu;                  // emission means, ordered
   *   real<lower=0> sigma;            // shared emission sd
   * }
   * transformed parameters {
@@ -46,6 +46,10 @@ import witdraw.inference.NUTS
   * first state. Stan leaves `sigma` on an implicit half-normal (`normal(0,1)`
   * truncated at 0); we use [[HalfNormal]] for it, and `Dirichlet(1,1,1)` for
   * the simplexes (Stan's implicit uniform-over-the-simplex prior).
+  *
+  * `mu` is ordered, which makes the states identifiable: otherwise the model
+  * is the same for every order of the states, and different chains settle on
+  * different orders (label switching).
   */
 object HMM:
 
@@ -195,11 +199,12 @@ object HMM:
 
   /** The latent sites of the model observed on `y`, with the constraints of the
     * Stan model: `sigma` positive, `rho` and every row of `gamma` on the
-    * simplex. `Latent` reads them off the distributions (HalfNormal, Dirichlet,
-    * RowwiseUniformSimplex).
+    * simplex, which `Latent` reads off the distributions (HalfNormal,
+    * Dirichlet, RowwiseUniformSimplex), and `mu` ordered, which its Normal
+    * prior does not say, so it needs a constraint.
     */
   def latent(y: Tensor1[Time, Float32]): Latent =
-    Latent.discover()(observed(y))
+    Latent.discover(Constraint(Mu, Bijector.ordered[State]))(observed(y))
 
   /** Draw parameters from their priors and simulate a length-`n` sequence. */
   def generate(n: Int)(
@@ -253,8 +258,9 @@ object HMM:
 
     // The warmup tunes the step size and the mass matrix.
     val (warmupKey, sampleKey) = Key(3L).split2()
+    // the traced mu is usually not ordered: start from random values instead
     val adapted =
-      NUTS.adapt(posterior, posterior.init, warmupKey, numSteps = 500)
+      NUTS.adapt(posterior, posterior.initRandom(Key(2L)), warmupKey, numSteps = 500)
     println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
     val (samples, infos) = adapted.sampler
       .run(adapted.position, sampleKey)
@@ -269,6 +275,6 @@ object HMM:
     val muMean = stack(samples.map(_(Mu)), Axis[Draw]).mean(Axis[Draw])
     val sigmaMean = stack(samples.map(_(Sigma)), Axis[Draw]).mean
     println(
-      s"mu:    $muMean   (true ${params.mu}, up to the order of the states)"
+      s"mu:    $muMean   (true ${params.mu})"
     )
     println(f"sigma: ${sigmaMean.item}%.3f   (true ${params.sigma.item})")

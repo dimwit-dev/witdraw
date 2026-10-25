@@ -21,6 +21,17 @@ class LatentSuite extends munit.FunSuite:
     assertEqualsFloat(latent.init(Mu).item, tr(Mu).item, 1e-6f)
     assertEqualsFloat(latent.init(Sigma).item, tr(Sigma).item, 1e-5f)
 
+  test("initRandom draws unconstrained values between -radius and radius"):
+    val starts = Key(1).split(20).map(latent.initRandom(_))
+    val mus = starts.map(_(Mu).item)
+    val sigmas = starts.map(_(Sigma).item)
+    assertEquals(mus.distinct.size, 20)
+    assert(mus.forall(m => m > -2f && m < 2f), s"mu $mus")
+    // sigma is exp of its unconstrained value
+    assert(sigmas.forall(s => s > math.exp(-2).toFloat && s < math.exp(2).toFloat), s"sigma $sigmas")
+    val narrow = latent.initRandom(Key(2), radius = 0.1f)
+    assert(math.abs(narrow(Mu).item) < 0.1f)
+
   test("Latent log-densities: model density, plus the Jacobian for sampling"):
     val p = latent.initWith(Mu := Tensor0(0.3f), Sigma := Tensor0(1.5f))
     assertEqualsFloat(p(Sigma).item, 1.5f, 1e-5f)
@@ -86,6 +97,15 @@ class LatentSuite extends munit.FunSuite:
       )
       .toList
     assertEquals(leafSizes, List(5))
+
+  test("initRandom works when the traced value lies outside its constraint"):
+    // the traced value is about -10, which the exp constraint cannot reach
+    object Neg extends Site[Tensor0[Float32]]
+    val constrained = Latent.discover(Constraint(Neg, Bijector.exp)):
+      Neg ~ Normal(-10f, 0.1f)
+    intercept[IllegalArgumentException](constrained.init)
+    val start = constrained.initRandom(Key(3))
+    assert(start(Neg).item > 0f)
 
   test("a start value outside its constraint is an error, with a hint"):
     val unordered = Tensor1(Axis[Comp]).fromArray(Array(1f, -1f, 0f))
