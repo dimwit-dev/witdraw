@@ -3,6 +3,7 @@ package witdraw.distributions
 import dimwit.*
 import dimwit.linalg.LinearAlgebra
 import dimwit.stats.{Beta, Normal}
+import witdraw.{Support, SupportOf}
 
 /** LKJ distribution over d×d correlation matrices.
   *
@@ -115,3 +116,7 @@ class LKJ[L: Label, V: IsFloating](
     m.updated(Axis[L].at(i))(
       m(Axis[L].at(i)).updated(Axis[Prime[L]].at(j))(value)
     )
+
+object LKJ:
+  given [L: Label, V]: SupportOf[LKJ[L, V], (L, Prime[L]), V] =
+    _ => Support.CorrelationMatrix()

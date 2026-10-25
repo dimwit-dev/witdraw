@@ -38,6 +38,15 @@ object Bijector:
       def inverse(x: Tensor[T, Float32]) = x.log
       def logDetJac(z: Tensor[T, Float32]) = z.sum // ∑ log e^{z_i} = ∑ z_i
 
+  /** `x = lo + exp(z)`, so `x > lo` element-wise — Stan's `<lower=a>`. */
+  def lowerBound[T <: Tuple: Labels](
+      lo: Tensor[T, Float32]
+  ): Bijector[Tensor[T, Float32], Tensor[T, Float32]] =
+    new Bijector[Tensor[T, Float32], Tensor[T, Float32]]:
+      def forward(z: Tensor[T, Float32]) = lo + z.exp
+      def inverse(x: Tensor[T, Float32]) = (x - lo).log
+      def logDetJac(z: Tensor[T, Float32]) = z.sum // ∑ log e^{z_i} = ∑ z_i
+
   /** `x = lo + (hi - lo)·σ(z)`, so `x ∈ (lo, hi)` element-wise — Stan's
     * `<lower=a, upper=b>`. `lo`/`hi` are full tensors (broadcast yourself for
     * scalar bounds).
@@ -57,9 +66,9 @@ object Bijector:
         val s = Tensor.sigmoid(z)
         (width.log + (s * -(s -! Tensor0(1f))).log).sum // ∑ log[width·σ(1-σ)]
 
-  /** Strictly increasing along the axis `L` — Stan's `ordered[k]`.
-    * `x_0 = z_0`, `x_j = x_{j-1} + exp(z_j)`, i.e. `x = cumsum([z_0, exp(z_1),
-    * …, exp(z_{k-1})])`.
+  /** Strictly increasing along the axis `L` — Stan's `ordered[k]`. `x_0 = z_0`,
+    * `x_j = x_{j-1} + exp(z_j)`, i.e. `x = cumsum([z_0, exp(z_1), …,
+    * exp(z_{k-1})])`.
     */
   def ordered[L: Label]: Bijector[Tensor1[L, Float32], Tensor1[L, Float32]] =
     val axis = Axis[L]
@@ -101,7 +110,9 @@ object Bijector:
 
     // offset_i = log(1 / (k - 1 - i)), for the n = k - 1 coordinates of z
     def offsets(n: Int) =
-      Tensor1(zAxis).fromArray(Array.tabulate(n)(i => math.log(1.0 / (n - i)).toFloat))
+      Tensor1(zAxis).fromArray(
+        Array.tabulate(n)(i => math.log(1.0 / (n - i)).toFloat)
+      )
 
     // ζ, and the stick left before each piece: 1, (1-ζ_0), (1-ζ_0)(1-ζ_1), …
     def fractions(z: Tensor1[LZ, Float32]) =
@@ -109,7 +120,10 @@ object Bijector:
       val zeta = Tensor.sigmoid(z + offsets(n))
       val leftAfter = (one -! zeta).cumprod(zAxis)
       val leftBefore = concatenate(
-        Seq(Tensor1(zAxis -> 1).fill(1f), leftAfter.select(zAxis.at(0 until n - 1))),
+        Seq(
+          Tensor1(zAxis -> 1).fill(1f),
+          leftAfter.select(zAxis.at(0 until n - 1))
+        ),
         zAxis
       )
       (zeta, leftBefore, leftAfter)
@@ -218,7 +232,8 @@ object Bijector:
             i <- 1 until d
             j <- 0 until i
           yield
-            val left = (0 until j).foldLeft(one)((acc, k) => acc - at(i, k) * at(i, k))
+            val left =
+              (0 until j).foldLeft(one)((acc, k) => acc - at(i, k) * at(i, k))
             val c = at(i, j) / left.sqrt
             ((one + c) / (one - c)).log * half // atanh(c)
         stack(zs, zAxis)

@@ -9,8 +9,10 @@ case class TraceEntry[T <: Tuple, V](
     site: SiteDef[T, V],
     distribution: Distribution[T, V],
     value: Tensor[T, V],
-    observed: Boolean
+    observed: Boolean,
+    support: Support[T, V]
 ):
+
   /** The log-density of the value under the site's distribution. */
   def logProb: Tensor0[Float32] = distribution.logProb(value).asFloat
 
@@ -30,6 +32,9 @@ final class Trace(val entries: Seq[TraceEntry[?, ?]]) extends SiteValues:
   def latentSites: Seq[SiteDef[?, ?]] =
     entries.filterNot(_.observed).map(_.site)
   def observedSites: Seq[SiteDef[?, ?]] = entries.filter(_.observed).map(_.site)
+
+  /** The entry of `site`, if the run sampled it. */
+  def entry(site: SiteDef[?, ?]): Option[TraceEntry[?, ?]] = bySite.get(site)
 
   /** The value of `site` in this run. */
   def apply[T <: Tuple, V](site: SiteDef[T, V]): Tensor[T, V] =
@@ -74,7 +79,8 @@ def withTrace[A](model: ProbProg[A])(using outer: ProbContext): (A, Trace) =
           statement.site,
           statement.distribution,
           value,
-          observed = statement.observed.isDefined
+          observed = statement.observed.isDefined,
+          statement.support
         )
         value
   )

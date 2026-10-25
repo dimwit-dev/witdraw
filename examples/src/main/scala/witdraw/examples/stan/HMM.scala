@@ -51,7 +51,6 @@ object HMM:
 
   trait Time derives Label // n = 1..N
   trait State derives Label // the 3 hidden states
-  trait SimplexZ derives Label // the 2 unconstrained coordinates of a 3-simplex
 
   private val nStates = 3
 
@@ -161,6 +160,13 @@ object HMM:
     ): Tensor0[LogProb] =
       x.vmap(Axis[State])(r => row.logProb(r)).sum
 
+  object RowwiseUniformSimplex:
+    /** Every row on the simplex, so `Latent` samples each row by
+      * stick-breaking.
+      */
+    given SupportOf[RowwiseUniformSimplex, (State, Prime[State]), Float32] =
+      _ => Support.Rowwise(Support.Simplex())
+
   // -- the model ------------------------------------------------------
 
   private def samplePriors(using ProbContext): HMMParams =
@@ -189,20 +195,11 @@ object HMM:
 
   /** The latent sites of the model observed on `y`, with the constraints of the
     * Stan model: `sigma` positive, `rho` and every row of `gamma` on the
-    * simplex.
+    * simplex. `Latent` reads them off the distributions (HalfNormal, Dirichlet,
+    * RowwiseUniformSimplex).
     */
   def latent(y: Tensor1[Time, Float32]): Latent =
-    val simplex = Bijector.simplexStickBreaking[SimplexZ, State]
-    Latent.discover(
-      Constraint(Sigma, Bijector.exp),
-      Constraint(Rho, simplex),
-      Constraint(
-        Gamma,
-        Bijector.rowwise[State, SimplexZ, Prime[State]](
-          Bijector.simplexStickBreaking[SimplexZ, Prime[State]]
-        )
-      )
-    )(observed(y))
+    Latent.discover()(observed(y))
 
   /** Draw parameters from their priors and simulate a length-`n` sequence. */
   def generate(n: Int)(

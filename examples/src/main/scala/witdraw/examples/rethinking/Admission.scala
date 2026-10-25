@@ -6,7 +6,7 @@ import witling.DataFrame
 import java.io.File
 import dimwit.stats.HalfCauchy
 import dimwit.stats.Distribution
-import witdraw.{Bijector, Constraint, Site}
+import witdraw.{Site, Support, SupportOf}
 import dimwit.stats.Normal
 import dimwit.stats.MVNormal
 import dimwit.stats.Bernoulli
@@ -22,9 +22,12 @@ import dimwit.jax.Jax
 import witling.updated
 import witling.Col
 
+/** `extent.size` independent draws of a multivariate normal, one per value of
+  * `LBatch`.
+  */
 class IndependentMultivariateDist[LBatch: Label, L: Label](
     extent: AxisExtent[LBatch],
-    dist: MultivariateDistribution[L, Float32]
+    dist: MVNormal[L, Float32]
 ) extends Distribution[(LBatch, L), Float32]:
 
   override def sample(key: Key): Tensor[(LBatch, L), Float32] =
@@ -33,6 +36,14 @@ class IndependentMultivariateDist[LBatch: Label, L: Label](
   override def logProb(value: Tensor[(LBatch, L), Float32]): Tensor0[LogProb] =
     val z = value.vmap(Axis[LBatch])(v => dist.logProb(v))
     z.sum
+
+object IndependentMultivariateDist:
+  /** Normal draws take any value. */
+  given [LBatch, L]: SupportOf[
+    IndependentMultivariateDist[LBatch, L],
+    (LBatch, L),
+    Float32
+  ] = _ => Support.Real()
 
 object AdmissionEx:
 
@@ -80,7 +91,6 @@ object AdmissionEx:
     trait Case derives Label // one application
     trait Dept derives Label // a department
     trait AB derives Label // the intercept (0) and the slope for male (1)
-    trait RZ derives Label // the unconstrained correlation
 
     object Alpha
         extends Site[Tensor0[Float32]] // the mean of the intercepts
@@ -145,13 +155,11 @@ object AdmissionEx:
     val admission = Tensor1(Axis[Case]).fromArray(admitted.map(_ == 1).toArray)
 
     // The latent sites are Alpha, Beta, Sigma, R and DeptAB; the intercepts
-    // and slopes per department are the columns of DeptAB. The spreads are
-    // sampled on the log scale, and R through the correlation bijector, so it
-    // stays a correlation matrix.
-    val posterior = Latent.discover(
-      Constraint(Sigma, Bijector.exp),
-      Constraint(R, Bijector.correlationMatrix[RZ, AB])
-    ):
+    // and slopes per department are the columns of DeptAB. Latent reads the
+    // supports off the distributions: the spreads (HalfCauchy) are sampled on
+    // the log scale, and R (LKJ) through the correlation bijector, so it stays
+    // a correlation matrix.
+    val posterior = Latent.discover():
       observe(Admission := admission)(model)
     println(s"latent sites: ${posterior.sites.map(_.name).mkString(", ")}")
 

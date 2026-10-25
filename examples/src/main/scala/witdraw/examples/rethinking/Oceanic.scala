@@ -114,11 +114,8 @@ object OceanicExample:
     )
 
     // eta2 and rho2 are the scale and decay rate of the covariance kernel,
-    // so both are sampled on the log scale.
-    val posterior = Latent.discover(
-      Constraint(Eta2, Bijector.exp),
-      Constraint(Rho2, Bijector.exp)
-    ):
+    // so both have HalfCauchy priors, and Latent samples them on the log scale.
+    val posterior = Latent.discover():
       observe(NumTools := numTools)(model(population, distances))
     println(s"latent sites: ${posterior.sites.map(_.name).mkString(", ")}")
 

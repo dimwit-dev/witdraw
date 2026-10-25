@@ -40,14 +40,13 @@ import witdraw.inference.NUTS
   * a small [[LogNormal]] defined here (dimwit has no built-in). The `ordered`
   * constraint on `mu` is an identifiability device against label switching; it
   * is a constrained-parameterisation concern for the sampler, so at the model
-  * level `mu` just carries its `normal(0, 10)` prior. The constraints of all
-  * three parameters are given to the sampler in [[latent]].
+  * level `mu` just carries its `normal(0, 10)` prior, and the constraint is
+  * given to the sampler in [[latent]].
   */
 object Mixture:
 
   trait Comp derives Label // k = 1..K mixture components
   trait Data derives Label // n = 1..N observations
-  trait ThetaZ derives Label // the K-1 unconstrained coordinates of theta
 
   object Theta
       extends Site[Tensor1[Comp, Float32]] // mixing proportions (simplex)
@@ -71,6 +70,13 @@ object Mixture:
     override def elementWiseLogProb(x: Tensor[T, Float32]): Tensor[T, LogProb] =
       LogProb(normal.elementWiseLogProb(x.log).asFloat - x.log)
     override def sample(key: Key): Tensor[T, Float32] = normal.sample(key).exp
+    def zeros: Tensor[T, Float32] = Tensor.like(muLog).fill(0f)
+
+  object LogNormal:
+    /** Positive values, so `Latent` samples a LogNormal site on the log scale.
+      */
+    given [T <: Tuple]: SupportOf[LogNormal[T], T, Float32] =
+      d => Support.GreaterThan(d.zeros)
 
   /** log-sum-exp over `axis` of a matrix, reducing it away. */
   private def logsumexp[L: Label, K: Label](
@@ -154,15 +160,12 @@ object Mixture:
     observe(Y := y)(model(k, y.shape(Axis[Data])))
 
   /** The latent sites of the model observed on `y`, with the constraints of the
-    * Stan model: `theta` on the simplex (by stick-breaking, from `K-1`
-    * unconstrained coordinates), `mu` ordered and `sigma` positive.
+    * Stan model. `theta` lies on the simplex and `sigma` is positive, which
+    * `Latent` reads off their distributions (Dirichlet, LogNormal). `mu` is
+    * ordered, which its Normal prior does not say, so it needs a constraint.
     */
   def latent(y: Tensor1[Data, Float32], k: Int): Latent =
-    Latent.discover(
-      Constraint(Theta, Bijector.simplexStickBreaking[ThetaZ, Comp]),
-      Constraint(Mu, Bijector.ordered[Comp]),
-      Constraint(Sigma, Bijector.exp)
-    )(observed(y, k))
+    Latent.discover(Constraint(Mu, Bijector.ordered[Comp]))(observed(y, k))
 
   /** Draw parameters from their priors and simulate `n` points from a
     * `k`-component mixture.

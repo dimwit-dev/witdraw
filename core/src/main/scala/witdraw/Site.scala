@@ -34,9 +34,17 @@ trait SiteDef[T <: Tuple, V](using val labels: Labels[T], owner: Scope):
   /** This site is distributed according to `dist`. Returns the site's value:
     * drawn from `dist`, or an observed value, depending on the handlers and the
     * interpreter that run the model.
+    *
+    * The [[Support]] of `dist` is looked up for its static type `D`, see
+    * [[SupportOf]].
     */
-  infix def ~(dist: Distribution[T, V])(using ctx: ProbContext): Tensor[T, V] =
-    ctx.sample(SampleStatement(this, dist, observed = None))
+  infix def ~[D <: Distribution[T, V]](dist: D)(using
+      ctx: ProbContext,
+      supportOf: SupportOf[D, T, V] = SupportOf.unknown[D, T, V]
+  ): Tensor[T, V] =
+    ctx.sample(
+      SampleStatement(this, dist, supportOf(dist), observed = None)
+    )
 
   /** An observation of this site, to pass to [[observe]]. */
   def :=(value: Tensor[T, V]): Observation[T, V] = Observation(this, value)

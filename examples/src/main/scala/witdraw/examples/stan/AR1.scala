@@ -63,9 +63,11 @@ object AR1:
   def observed(y: Tensor1[Time, Float32])(using ProbContext) =
     observe(Y := y)(model(y.shape(Axis[Time])))
 
-  /** The latent sites of the model observed on `y`, with `sigma` positive. */
+  /** The latent sites of the model observed on `y`. `sigma` stays positive, as
+    * `Latent` reads off its HalfCauchy prior.
+    */
   def latent(y: Tensor1[Time, Float32]): Latent =
-    Latent.discover(Constraint(Sigma, Bijector.exp))(observed(y))
+    Latent.discover()(observed(y))
 
   // -- Generative helpers -------------------------------------------------
 
