@@ -34,7 +34,7 @@ ThisBuild / developers := List(
   )
 )
 
-// Publishes `core` only. `examples` depends on witling and plotwit, which are not published.
+// Publishes `core` only. `examples` depends on plotwit, which is not published.
 addCommandAlias(
   "sonaUploadCore",
   "; project core; sonatypeCentralUpload; project root"
@@ -77,7 +77,7 @@ lazy val examples = (project in file("examples"))
     name := "witdraw-examples",
     libraryDependencies ++= Seq(
       "org.scala-lang" %% "toolkit" % "0.9.1",
-      "ch.contrafactus" %% "witling-core" % "0.1-SNAPSHOT" changing (),
+      "io.github.quafadas" %% "scautable" % "0.0.45",
       "ch.contrafactus" %% "plotwit-core" % "0.3-SNAPSHOT" changing ()
     ),
     fork := true,

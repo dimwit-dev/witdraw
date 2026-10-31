@@ -13,13 +13,13 @@ import witdraw.ProbContext
 import witdraw.Site
 import witdraw.observe
 import witdraw.Bijector
-import witling.DataFrame
 import witdraw.inference.NUTS
 import plotwit.PlotTargets.websocket
 import plotwit.{display, grid}
 
-import java.io.File
 import plotwit.plots.histogramPlot
+import io.github.quafadas.table.*
+import scala.NamedTuple.{Names, DropNames}
 
 object Chimpanzees:
 
@@ -27,7 +27,7 @@ object Chimpanzees:
   def chimps(): Unit =
     dimwit.initialize()
 
-    type Schema = (
+    type Chimps = (
         actor: Int,
         recipient: String,
         condition: Int,
@@ -38,31 +38,34 @@ object Chimpanzees:
         pulled_left: Int
     )
 
-    val dataDir = new File(System.getProperty("user.dir"))
-    val df =
-      DataFrame.fromCSV[Schema](new File(dataDir, "data/chimpanzees.csv"))
+    val df = CSV
+      .fromTyped[Names[Chimps], DropNames[Chimps]](
+        os.pwd / "data" / "chimpanzees.csv"
+      )
+      .toVector
+      .toColumnOriented
 
     trait Trial derives Label // Each row is one experimental trial
     trait Chimp derives Label // The 7 individual chimpanzee subjects
 
     // Whether a partner chimp was present in this trial (the "condition")
     val hasPartner =
-      Tensor1(Axis[Trial]).fromArray(df.cols.condition.toArray)
+      Tensor1(Axis[Trial]).fromArray(df.condition.toArray)
     // Whether the prosocial food option was on the left side
     val prosocialOnLeft =
-      Tensor1(Axis[Trial]).fromArray(df.cols.prosoc_left.toArray)
+      Tensor1(Axis[Trial]).fromArray(df.prosoc_left.toArray)
     // Observed outcome: did the chimp pull the left lever?
     val pulledLeft =
       Tensor1(Axis[Trial]).fromArray(
-        df.cols.pulled_left.toArray.map(b => if b == 1 then true else false)
+        df.pulled_left.toArray.map(b => if b == 1 then true else false)
       )
-    val chimps = df.cols.actor.toSet.toList.sorted
+    val chimps = df.actor.toSet.toList.sorted
 
     // For each trial, the index of the chimp that performed it
-    val chimpIndexPerTrial = df.cols.actor.map(actor => chimps.indexOf(actor))
+    val chimpIndexPerTrial = df.actor.map(actor => chimps.indexOf(actor))
 
     val nTrials = hasPartner.shape(Axis[Trial])
-    val nChimps = df.cols.actor.toSet.size
+    val nChimps = df.actor.toSet.size
 
     object PulledLeft extends Site[Tensor1[Trial, Bool]]
 

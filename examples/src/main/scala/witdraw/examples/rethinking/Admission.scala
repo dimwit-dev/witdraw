@@ -2,8 +2,8 @@ package witdraw.examples.rethinking
 
 import dimwit.*
 import dimwit.tensor.Labels
-import witling.DataFrame
-import java.io.File
+import io.github.quafadas.table.*
+import scala.NamedTuple.{Names, DropNames}
 import dimwit.stats.HalfCauchy
 import dimwit.stats.Distribution
 import witdraw.{Site, Support, SupportOf}
@@ -19,8 +19,6 @@ import witdraw.ProbProg
 import witdraw.observe
 import witdraw.inference.NUTS
 import dimwit.jax.Jax
-import witling.updated
-import witling.Col
 
 /** `extent.size` independent draws of a multivariate normal, one per value of
   * `LBatch`.
@@ -51,7 +49,7 @@ object AdmissionEx:
   def admission(): Unit =
     dimwit.initialize()
 
-    type Schema = (
+    type UcbAdmit = (
         rownames: Int,
         Admit: String,
         Gender: String,
@@ -59,31 +57,37 @@ object AdmissionEx:
         Freq: Int
     )
 
-    val dataDir = new File(System.getProperty("user.dir"))
-    val df =
-      DataFrame.fromCSV[Schema](new File(dataDir, "data/ucbadmit.csv"))
-    val dfCleaned =
-      df.mapRows(row =>
-        row
-          .updated(Col["Admit"])(if row.Admit == "Admitted" then 1 else 0)
-          .updated(Col["Gender"])(if row.Gender == "Male" then 1 else 0)
-          .updated(Col["Dept"])(row.Dept match
+    val df = CSV
+      .fromTyped[Names[UcbAdmit], DropNames[UcbAdmit]](
+        os.pwd / "data" / "ucbadmit.csv"
+      )
+      .toVector
+    val dfCleaned = df
+      .map(row =>
+        (
+          Admit = if row.Admit == "Admitted" then 1 else 0,
+          Gender = if row.Gender == "Male" then 1 else 0,
+          Dept = row.Dept match
             case "A" => 0
             case "B" => 1
             case "C" => 2
             case "D" => 3
             case "E" => 4
-            case "F" => 5)
+            case "F" => 5
+          ,
+          Freq = row.Freq
+        )
       )
+      .toColumnOriented
 
     // Each row counts the applications with one outcome, gender and
     // department; expand them into one case per application.
-    val rows = dfCleaned.cols.Freq.toArray.indices.flatMap: i =>
-      Seq.fill(dfCleaned.cols.Freq.toArray(i))(i)
+    val rows = dfCleaned.Freq.toArray.indices.flatMap: i =>
+      Seq.fill(dfCleaned.Freq.toArray(i))(i)
     def perCase(col: Array[Int]): Seq[Int] = rows.map(col)
-    val admitted = perCase(dfCleaned.cols.Admit.toArray)
-    val isMale = perCase(dfCleaned.cols.Gender.toArray)
-    val deptIndex = perCase(dfCleaned.cols.Dept.toArray)
+    val admitted = perCase(dfCleaned.Admit.toArray)
+    val isMale = perCase(dfCleaned.Gender.toArray)
+    val deptIndex = perCase(dfCleaned.Dept.toArray)
     val depts = Seq("A", "B", "C", "D", "E", "F")
     val nDepts = depts.size
     println(s"${rows.size} applications in ${nDepts} departments")
@@ -92,8 +96,7 @@ object AdmissionEx:
     trait Dept derives Label // a department
     trait AB derives Label // the intercept (0) and the slope for male (1)
 
-    object Alpha
-        extends Site[Tensor0[Float32]] // the mean of the intercepts
+    object Alpha extends Site[Tensor0[Float32]] // the mean of the intercepts
     object Beta extends Site[Tensor0[Float32]] // the mean of the slopes
     object AlphaDept
         extends Site[Tensor1[Dept, Float32]] // the intercept per department

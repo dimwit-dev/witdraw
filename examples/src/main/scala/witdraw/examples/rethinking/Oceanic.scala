@@ -3,8 +3,8 @@ package witdraw.examples.rethinking
 import dimwit.*
 import dimwit.stats.*
 import witdraw.*
-import witling.*
-import java.io.File
+import io.github.quafadas.table.*
+import scala.NamedTuple.{Names, DropNames}
 import witdraw.inference.NUTS
 import plotwit.plots.histogramPlot
 
@@ -65,53 +65,53 @@ object OceanicExample:
   def runOceanicExample(): Unit =
     dimwit.initialize()
 
-    val dataDir = new File(System.getProperty("user.dir"))
-    val df =
-      DynamicDataFrame.fromCSV(File(dataDir, "data/islandsDistMatrix.csv"))
-
-    val typed = df.narrowTo[
-      (
-          Malekula: Float,
-          Tikopia: Float,
-          Santa_Cruz: Float,
-          Yap: Float,
-          Lau_Fiji: Float,
-          Trobriand: Float,
-          Chuuk: Float,
-          Manus: Float,
-          Tonga: Float,
-          Hawaii: Float
+    // Pairwise distances between the 10 societies; the first, unnamed column holds the island names
+    type Islands = (
+        "Malekula",
+        "Tikopia",
+        "Santa_Cruz",
+        "Yap",
+        "Lau_Fiji",
+        "Trobriand",
+        "Chuuk",
+        "Manus",
+        "Tonga",
+        "Hawaii"
+    )
+    val distMatrix = CSV
+      .fromTyped["" *: Islands, String *: Tuple.Map[Islands, [_] =>> Double]](
+        os.pwd / "data" / "islandsDistMatrix.csv"
       )
-    ]
-    println(typed.show())
-
-    val kline2 = DynamicDataFrame.fromCSV(File(dataDir, "data/Kline2.csv"))
-    val klineTyped = kline2.narrowTo[
-      (
-          culture: String,
-          population: Int,
-          total_tools: Int
-      )
-    ]
+      .toVector
     val distances = Tensor2(Axis[Society] -> 10, Axis[Prime[Society]] -> 10)
       .fromArray(
-        typed.cols.Malekula.toArray ++
-          typed.cols.Tikopia.toArray ++
-          typed.cols.Santa_Cruz.toArray ++
-          typed.cols.Yap.toArray ++
-          typed.cols.Lau_Fiji.toArray ++
-          typed.cols.Trobriand.toArray ++
-          typed.cols.Chuuk.toArray ++
-          typed.cols.Manus.toArray ++
-          typed.cols.Tonga.toArray ++
-          typed.cols.Hawaii.toArray
+        distMatrix.toArray.flatMap(row =>
+          row.toTuple.drop(1).toList.asInstanceOf[List[Double]].map(_.toFloat)
+        )
       )
 
-    val population = Tensor1(Axis[Society] -> 10)
-      .fromArray(klineTyped.cols.population.toArray.map(_.toFloat))
-    val numTools = Tensor1(Axis[Society]).fromArray(
-      klineTyped.cols.total_tools.toArray.map(_.toInt)
+    type Kline = (
+        culture: String,
+        population: Int,
+        contact: String,
+        total_tools: Int,
+        mean_TU: Double,
+        lat: Double,
+        lon: Double,
+        lon2: Double,
+        logpop: Double
     )
+
+    val kline2 = CSV
+      .fromTyped[Names[Kline], DropNames[Kline]](
+        os.pwd / "data" / "Kline2.csv"
+      )
+      .toVector
+      .toColumnOriented
+
+    val population = Tensor1(Axis[Society] -> 10)
+      .fromArray(kline2.population.toArray.map(_.toFloat))
+    val numTools = Tensor1(Axis[Society]).fromArray(kline2.total_tools.toArray)
 
     // eta2 and rho2 are the scale and decay rate of the covariance kernel,
     // so both have HalfCauchy priors, and Latent samples them on the log scale.
