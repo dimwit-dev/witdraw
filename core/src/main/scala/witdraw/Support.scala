@@ -145,6 +145,8 @@ object SupportOf:
   given exponential[T <: Tuple: Labels]
       : SupportOf[Exponential[T, Float32], T, Float32] =
     d => GreaterThan(Tensor.like(d.rate).fill(0f))
+  given gamma[T <: Tuple: Labels]: SupportOf[Gamma[T, Float32], T, Float32] =
+    d => GreaterThan(Tensor.like(d.rate).fill(0f))
 
   given uniform[T <: Tuple, V]: SupportOf[Uniform[T, V], T, V] =
     d => Interval(d.low, d.high)
