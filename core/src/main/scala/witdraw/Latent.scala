@@ -43,6 +43,7 @@ final class Latent private (
   object Params:
     given TensorTree[Params] = TensorTree.tensor[Tuple1[LatentDim], Float32]
     given TreeOf[Params, Float32] = TreeOf.tensor[Tuple1[LatentDim], Float32]
+    given SiteReader[Params] = values(_)
 
     extension (params: Params)
       /** The value of `site`, in the model's own (constrained) space.

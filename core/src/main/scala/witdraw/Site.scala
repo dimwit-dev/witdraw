@@ -75,3 +75,10 @@ case class Observation[T <: Tuple, V](site: SiteDef[T, V], value: Tensor[T, V])
 trait SiteValues:
   /** The value of `site`. */
   def apply[T <: Tuple, V](site: SiteDef[T, V]): Tensor[T, V]
+
+/** How to read the values of sites from a `P`, e.g. from the parameters of a
+  * [[Latent]]. It lets generic code, such as plots of posterior draws, find a
+  * site's value in a draw.
+  */
+trait SiteReader[P]:
+  def values(p: P): SiteValues

@@ -7,15 +7,17 @@ import dimwit.tensortree.TensorTree
 import me.shadaj.scalapy.py
 import me.shadaj.scalapy.py.SeqConverters
 
-/** Convergence diagnostics for the draws of several chains, as from
+/** Convergence diagnostics for the [[Draws]] of several chains, as from
   * [[SamplingAlgorithm.sampleChains]] or [[NUTSChainsAdaptation.sample]].
   *
   * Each takes the draws of one quantity, e.g. a site, per chain, and returns
   * one value per element of the quantity:
   * {{{
-  * val chains = adapted.sample(key, 1000).map(_.map(_._1))
-  * val rhat = Diagnostics.rhat(chains.map(_.map(_(Beta))))   // like Beta
-  * val ess = Diagnostics.ess(chains.map(_.map(_(Beta))))
+  * val draws = adapted.sample(key, 1000)
+  * val rhat = Diagnostics.rhat(draws, Beta)   // like Beta
+  * val ess = Diagnostics.ess(draws, Beta)
+  * // a value computed from the sites
+  * val rhatSum = Diagnostics.rhat(draws.values(p => p(Beta).sum))
   * }}}
   */
 object Diagnostics:
@@ -61,6 +63,20 @@ object Diagnostics:
     require(numDraws >= 2, s"ess needs at least 2 draws per chain, but got $numDraws")
     val value = py.module("blackjax.diagnostics").effective_sample_size(draws)
     result(value, shapeOf(draws).drop(2))
+
+  /** The split R-hat of `site`, over the chains of `draws`; see [[rhat]]. */
+  def rhat[P, I, T <: Tuple](draws: Draws[P, I], site: SiteDef[T, Float32])(using
+      SiteReader[P]
+  ): Tensor[T, Float32] =
+    rhat(draws(site))(using site.labels)
+
+  /** The effective sample size of `site`, over the chains of `draws`; see
+    * [[ess]].
+    */
+  def ess[P, I, T <: Tuple](draws: Draws[P, I], site: SiteDef[T, Float32])(using
+      SiteReader[P]
+  ): Tensor[T, Float32] =
+    ess(draws(site))(using site.labels)
 
   /** The draws as one array, with a chain and a draw axis in front. */
   private def stacked[T <: Tuple: Labels](

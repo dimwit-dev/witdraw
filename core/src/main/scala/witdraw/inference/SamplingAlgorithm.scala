@@ -66,12 +66,12 @@ case class SamplingAlgorithm[P, S <: KernelState[P], I](
       TensorTree[P],
       TensorTree[S],
       TensorTree[I]
-  ): Seq[Seq[(P, I)]] =
+  ): Draws[P, I] =
     val loop = loopCache.synchronized:
       loopCache
         .getOrElseUpdate("chains", SamplingAlgorithm.chainsLoop[P, S, I](_ => this))
         .asInstanceOf[py.Dynamic]
-    SamplingAlgorithm.sampleChains(loop, initials, Seq.empty, key, numDraws)
+    Draws(SamplingAlgorithm.sampleChains(loop, initials, Seq.empty, key, numDraws))
 
   /** The loop of [[sample]] from a state, compiled once. scan's outputs must
     * be tensors, so each draw is flattened into a vector.
