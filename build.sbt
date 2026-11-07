@@ -34,7 +34,7 @@ ThisBuild / developers := List(
   )
 )
 
-// Publishes `core` only. `examples` depends on plotwit, which is not published.
+// Publishes `core` only.
 addCommandAlias(
   "sonaUploadCore",
   "; project core; sonatypeCentralUpload; project root"
@@ -50,7 +50,7 @@ csrConfiguration := csrConfiguration.value
 resolvers += Resolver.defaultLocal
 
 lazy val root = (project in file("."))
-  .aggregate(core, examples)
+  .aggregate(core, plots, examples)
   .settings(
     name := "witdraw-root",
     publish / skip := true,
@@ -71,14 +71,26 @@ lazy val core = (project in file("core"))
     fork := true
   )
 
-lazy val examples = (project in file("examples"))
+lazy val plots = (project in file("plots"))
   .dependsOn(core)
+  .settings(
+    name := "witdraw-plots",
+    description := "Plots for WitDraw (box plots, MCMC trace plots), built on plotwit",
+    libraryDependencies ++= Seq(
+      "ch.contrafactus" %% "plotwit-core" % "0.3-SNAPSHOT" changing ()
+    ),
+    Compile / packageSrc / publishArtifact := true,
+    Compile / packageDoc / publishArtifact := true,
+    fork := true
+  )
+
+lazy val examples = (project in file("examples"))
+  .dependsOn(core, plots)
   .settings(
     name := "witdraw-examples",
     libraryDependencies ++= Seq(
       "org.scala-lang" %% "toolkit" % "0.9.1",
-      "io.github.quafadas" %% "scautable" % "0.0.45",
-      "ch.contrafactus" %% "plotwit-core" % "0.3-SNAPSHOT" changing ()
+      "io.github.quafadas" %% "scautable" % "0.0.45"
     ),
     fork := true,
     // Don't publish examples
