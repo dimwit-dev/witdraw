@@ -14,10 +14,8 @@ core/target/
 core/*/.scala-build
 examples/target/
 examples/*/.scala-build
-dataframe/target/
-dataframe/*/.scala-build
-plotting/target/
-plotting/*/.scala-build
+plots/target/
+plots/*/.scala-build
 ide-*.json
 .witdraw-docs
 uv.lock
