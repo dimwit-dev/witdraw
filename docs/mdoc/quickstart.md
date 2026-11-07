@@ -298,8 +298,13 @@ chain on its own. All chains then run side by side, in one compiled loop:
 val Seq(initKey, chainsWarmupKey, chainsSampleKey) = nutsKey.split(3)
 val starts = initKey.split(4).map(latent.initRandom(_))
 val adaptedChains = NUTS.adaptChains(latent, starts, chainsWarmupKey)
-val chains = adaptedChains.sample(chainsSampleKey, 1000).map(_.map(_._1))
+val chainDraws = adaptedChains.sample(chainsSampleKey, 1000)
 ```
+
+The result is a `Draws`: per chain, the positions and the sampler's info.
+`chainDraws(Beta)` gives the values of a site per chain, `chainDraws.all` the
+positions of all chains together, and `chainDraws.numDivergent` the number of
+divergent transitions.
 
 `Diagnostics.rhat` compares the chains: values close to 1 mean they agree, and
 values above about 1.01 are a warning. `Diagnostics.ess` estimates how many
@@ -307,8 +312,8 @@ independent draws the chains are worth. Both have the shape of the quantity,
 so `beta` gets one value per predictor:
 
 ```scala mdoc
-Diagnostics.rhat(chains.map(_.map(_(Beta))))
-Diagnostics.ess(chains.map(_.map(_(Sigma))))
+Diagnostics.rhat(chainDraws, Beta)
+Diagnostics.ess(chainDraws, Sigma)
 ```
 
 For a sampler with fixed settings, `sampler.sampleChains(starts, key, numDraws)`

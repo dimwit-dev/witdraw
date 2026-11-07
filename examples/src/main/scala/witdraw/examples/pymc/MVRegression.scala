@@ -163,12 +163,10 @@ object MVRegression:
       targetAcceptanceRate = 0.99
     )
     val draws = adapted.sample(sampleKey, numDraws)
-    val divergent = draws.map(_.count(_._2.isDivergent)).sum
-    println(s"NUTS divergences: $divergent / ${numChains * numDraws}")
+    println(s"NUTS divergences: ${draws.numDivergent} / ${numChains * numDraws}")
 
-    val chains = draws.map(_.map(_._1))
     val betaChains =
-      chains.map(_.map(p => shrunkCoefficients(p(Z), p(Tau), p(Lambda))(p(C2))))
+      draws.values(p => shrunkCoefficients(p(Z), p(Tau), p(Lambda))(p(C2)))
 
     type Row = (name: String, mean: Float, sd: Float, rhat: Float, ess: Float)
 
@@ -202,10 +200,10 @@ object MVRegression:
 
     val rows =
       Seq(
-        scalarRow("sigma", chains.map(_.map(_(Sigma)))),
-        scalarRow("tau", chains.map(_.map(_(Tau)))),
-        scalarRow("c2", chains.map(_.map(_(C2)))),
-        scalarRow("beta0", chains.map(_.map(_(Beta0))))
+        scalarRow("sigma", draws(Sigma)),
+        scalarRow("tau", draws(Tau)),
+        scalarRow("c2", draws(C2)),
+        scalarRow("beta0", draws(Beta0))
       ) ++ vectorRows("beta", betaChains)
 
     println(

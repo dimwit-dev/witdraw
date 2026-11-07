@@ -49,8 +49,9 @@ case class NUTSInfo(
   def numIntegrationSteps: Int = numIntegrationStepsT.item
   def isDivergent: Boolean = isDivergentT.item
   def energy: Double = energyT.item.toDouble
-
 object NUTSInfo:
+  given SamplerInfo[NUTSInfo] = _.isDivergent
+
   given TensorTree[NUTSInfo] = TensorTree.derived
 
   private[witdraw] def fromPy(raw: py.Dynamic): NUTSInfo =
@@ -141,8 +142,8 @@ final class NUTSChainsAdaptation[P: TensorTree] private[witdraw] (
     * The loop is compiled on the first call, and shared by all adaptations
     * from the same [[NUTSChainsWarmup]].
     */
-  def sample(key: Key, numDraws: Int): Seq[Seq[(P, NUTSInfo)]] =
-    SamplingAlgorithm.sampleChains(loop, chains.map(_.position), settings, key, numDraws)
+  def sample(key: Key, numDraws: Int): Draws[P, NUTSInfo] =
+    Draws(SamplingAlgorithm.sampleChains(loop, chains.map(_.position), settings, key, numDraws))
 
   /** The divergent transitions during the warmup, summed over the chains. */
   def numDivergent: Int = chains.map(_.numDivergent).sum

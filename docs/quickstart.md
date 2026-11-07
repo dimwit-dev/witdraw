@@ -281,11 +281,11 @@ val (sigmaMean, sigmaSd) = summary(samples.map(_(Sigma)))
 
 ```scala
 println(s"alpha: mean $alphaMean, sd $alphaSd   (true $alphaTrue)")
-// alpha: mean 0.40220875, sd 0.06991693   (true 0.5)
+// alpha: mean 0.40205646, sd 0.068933584   (true 0.5)
 println(s"beta:  mean $betaMean, sd $betaSd   (true $betaTrue)")
-// beta:  mean [-1.4135246  2.0418777], sd [0.07099658 0.06975138]   (true [-1.5  2. ])
+// beta:  mean [-1.4118494  2.0433576], sd [0.07367019 0.07114119]   (true [-1.5  2. ])
 println(s"sigma: mean $sigmaMean, sd $sigmaSd   (true $sigmaTrue)")
-// sigma: mean 0.6903628, sd 0.051191546   (true 0.8)
+// sigma: mean 0.68971026, sd 0.0504445   (true 0.8)
 ```
 
 The true values lie within roughly two posterior standard deviations of the
@@ -299,7 +299,7 @@ run has no divergent transitions and a reasonably high acceptance rate:
 val divergences = infos.count(_.isDivergent)
 // divergences: Int = 0
 val meanAcceptance = infos.map(_.acceptanceRate).sum / infos.size
-// meanAcceptance: Double = 0.9253197636604309
+// meanAcceptance: Double = 0.8962475170716643
 ```
 
 ### Running several chains
@@ -314,8 +314,13 @@ chain on its own. All chains then run side by side, in one compiled loop:
 val Seq(initKey, chainsWarmupKey, chainsSampleKey) = nutsKey.split(3)
 val starts = initKey.split(4).map(latent.initRandom(_))
 val adaptedChains = NUTS.adaptChains(latent, starts, chainsWarmupKey)
-val chains = adaptedChains.sample(chainsSampleKey, 1000).map(_.map(_._1))
+val chainDraws = adaptedChains.sample(chainsSampleKey, 1000)
 ```
+
+The result is a `Draws`: per chain, the positions and the sampler's info.
+`chainDraws(Beta)` gives the values of a site per chain, `chainDraws.all` the
+positions of all chains together, and `chainDraws.numDivergent` the number of
+divergent transitions.
 
 `Diagnostics.rhat` compares the chains: values close to 1 mean they agree, and
 values above about 1.01 are a warning. `Diagnostics.ess` estimates how many
@@ -323,10 +328,10 @@ independent draws the chains are worth. Both have the shape of the quantity,
 so `beta` gets one value per predictor:
 
 ```scala
-Diagnostics.rhat(chains.map(_.map(_(Beta))))
-// res7: Tensor[Tuple1[Feature], Float32] = [0.99958324 0.9996927 ]
-Diagnostics.ess(chains.map(_.map(_(Sigma))))
-// res8: Tensor[EmptyTuple, Float32] = 4318.6504
+Diagnostics.rhat(chainDraws, Beta)
+// res7: Tensor[Tuple1[Feature], Float32] = [0.99991   0.9997617]
+Diagnostics.ess(chainDraws, Sigma)
+// res8: Tensor[EmptyTuple, Float32] = 3855.3652
 ```
 
 For a sampler with fixed settings, `sampler.sampleChains(starts, key, numDraws)`
@@ -506,7 +511,7 @@ well as here:
 val lsLatent = Latent.discover():
   observe(outcome.Y := yData):
     outcome(xData)
-// lsLatent: Latent = witdraw.Latent@14f5d34f
+// lsLatent: Latent = witdraw.Latent@62ca34ba
 
 lsLatent.sites.map(_.name)
 // res10: Seq[String] = Vector(
@@ -550,18 +555,18 @@ val start = Seq(
 ```scala
 val mode = outcome.values(lsLatent.values(MAP(lsLatent, start)))
 // mode: Values = Values(
-//   mean = Values(intercept = 0.40074044, weights = [-1.4111495  2.0541945]),
+//   mean = Values(intercept = 0.40074044, weights = [-1.4111494  2.0541947]),
 //   logScale = Values(
 //     intercept = -0.40187716,
-//     weights = [ 0.0855608  -0.02117608]
+//     weights = [ 0.08556081 -0.02117608]
 //   )
 // )
 mode.mean.weights
-// res11: Tensor[Tuple1[Feature], Float32] = [-1.4111495  2.0541945]
+// res11: Tensor[Tuple1[Feature], Float32] = [-1.4111494  2.0541947]
 mode.logScale.weights
-// res12: Tensor[Tuple1[Feature], Float32] = [ 0.0855608  -0.02117608]
+// res12: Tensor[Tuple1[Feature], Float32] = [ 0.08556081 -0.02117608]
 mode.logScale.intercept.exp
-// res13: Tensor[EmptyTuple, Float32] = 0.669063
+// res13: Tensor[EmptyTuple, Float32] = 0.6690629
 ```
 
 The weights of the mean are close to `betaTrue`. The data was simulated
