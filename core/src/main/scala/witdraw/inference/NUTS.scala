@@ -9,12 +9,19 @@ import me.shadaj.scalapy.py
 import me.shadaj.scalapy.py.SeqConverters
 
 /** The state of [[NUTS]]: the position, and the log-density and its gradient
-  * there, as in BlackJax's `HMCState`.
+  * there, as in BlackJax's `HMCState`. It also holds the step size and the
+  * inverse mass matrix, so that chains with different ones, e.g. adapted
+  * each on its own, share one compiled loop.
   */
 case class NUTSState[P](
     position: P,
     logDensity: Tensor0[Float32],
-    logDensityGrad: P
+    logDensityGrad: P,
+    private[witdraw] val stepSize: Tensor0[Float32],
+    /** The diagonal of the inverse mass matrix, or the dense matrix row by
+      * row, over the flattened parameters.
+      */
+    private[witdraw] val inverseMass: Tensor1[MassElement, Float32]
 ) extends KernelState[P]:
   private[witdraw] def toPy(using tree: TensorTree[P]): py.Dynamic =
     py.module("blackjax.mcmc.hmc")
@@ -24,17 +31,38 @@ case class NUTSState[P](
         tree.toPyTree(logDensityGrad)
       )
 
+  /** The inverse mass matrix in BlackJax's representation: a vector for a
+    * diagonal one, a matrix for a dense one. Shapes are known while tracing,
+    * so this is decided once per compilation.
+    */
+  private[witdraw] def pyInverseMass(using tree: TensorTree[P]): py.Dynamic =
+    val n = py.module("jax.flatten_util")
+      .ravel_pytree(tree.toPyTree(position))
+      .bracketAccess(0)
+      .size
+      .as[Int]
+    val flat = TensorTree[Tensor1[MassElement, Float32]].toPyTree(inverseMass).as[py.Dynamic]
+    if flat.size.as[Int] == n then flat else flat.reshape(n, n)
+
 object NUTSState:
   given [P: TensorTree]: TensorTree[NUTSState[P]] = TensorTree.derived
 
-  private[witdraw] def fromPy[P](raw: py.Dynamic)(using
-      tree: TensorTree[P]
-  ): NUTSState[P] =
+  /** The state for BlackJax's `raw` state, with the given settings. */
+  private[witdraw] def fromPy[P](
+      raw: py.Dynamic,
+      stepSize: Tensor0[Float32],
+      inverseMass: Tensor1[MassElement, Float32]
+  )(using tree: TensorTree[P]): NUTSState[P] =
     NUTSState(
       tree.fromPyTree(raw.position),
       TensorTree[Tensor0[Float32]].fromPyTree(raw.logdensity),
-      tree.fromPyTree(raw.logdensity_grad)
+      tree.fromPyTree(raw.logdensity_grad),
+      stepSize,
+      inverseMass
     )
+
+/** The axis of the flattened inverse mass matrix in [[NUTSState]]. */
+private[witdraw] trait MassElement derives Label
 
 /** Diagnostics of one NUTS step. They are kept as tensors, so that a step can
   * run in a compiled loop, and each is read only when asked for.
@@ -100,7 +128,7 @@ object InverseMassMatrix:
 
 /** The result of [[NUTS.adapt]]: the tuned step size and inverse mass matrix,
   * a sampler that uses them, and the position at the end of the warmup, from
-  * which to start it.
+  * which [[sample]] continues.
   */
 case class NUTSAdaptation[P](
     sampler: SamplingAlgorithm[P, NUTSState[P], NUTSInfo],
@@ -108,45 +136,12 @@ case class NUTSAdaptation[P](
     stepSize: Double,
     inverseMassMatrix: InverseMassMatrix[P],
     numDivergent: Int
-)
-
-/** The window adaptation of several chains, from [[NUTS.chainsWarmup]]. It is
-  * compiled on the first [[run]], and later runs reuse it, as long as they
-  * have as many chains; so do the samplers of the adaptations it returns.
-  */
-final class NUTSChainsWarmup[P: TensorTree] private[inference] (
-    pyLogDensity: py.Dynamic,
-    numSteps: Int,
-    dense: Boolean,
-    targetAcceptanceRate: Double
 ):
-  private lazy val warmup =
-    NUTS.compiledWarmup(pyLogDensity, numSteps, dense, targetAcceptanceRate)
-  private lazy val loop = NUTS.chainsLoop[P](pyLogDensity)
-
-  /** Runs the warmup for one chain per starting position in `initials`. */
-  def run(initials: Seq[P], key: Key): NUTSChainsAdaptation[P] =
-    NUTS.runChainsWarmup(initials, key, dense, pyLogDensity, warmup, loop)
-
-/** The result of [[NUTS.adaptChains]]: one [[NUTSAdaptation]] per chain, each
-  * with its own step size and inverse mass matrix, as in Stan. [[sample]]
-  * continues all chains from the ends of their warmups.
-  */
-final class NUTSChainsAdaptation[P: TensorTree] private[witdraw] (
-    val chains: Seq[NUTSAdaptation[P]],
-    loop: py.Dynamic,
-    settings: Seq[py.Any]
-):
-
-  /** `numDraws` draws of each chain, after its warmup, in one compiled loop.
-    * The loop is compiled on the first call, and shared by all adaptations
-    * from the same [[NUTSChainsWarmup]].
+  /** `numDraws` draws of the tuned sampler, continuing from the end of the
+    * warmup.
     */
-  def sample(key: Key, numDraws: Int): Draws[P, NUTSInfo] =
-    Draws(SamplingAlgorithm.sampleChains(loop, chains.map(_.position), settings, key, numDraws))
-
-  /** The divergent transitions during the warmup, summed over the chains. */
-  def numDivergent: Int = chains.map(_.numDivergent).sum
+  def sample(key: Key, numDraws: Int)(using TensorTree[P]): Chain[P, NUTSInfo] =
+    sampler.sample(key, position, numDraws)
 
 /** The No-U-Turn Sampler, a variant of Hamiltonian Monte Carlo that chooses the
   * length of each trajectory itself, run by BlackJax.
@@ -155,12 +150,14 @@ final class NUTSChainsAdaptation[P: TensorTree] private[witdraw] (
   * matrix, and returns a sampler that uses them:
   * {{{
   * val (warmupKey, sampleKey) = key.split2()
-  * val adapted = NUTS.adapt(latent, latent.init, warmupKey)
-  * val draws = adapted.sampler
-  *   .sample(adapted.position, sampleKey, 2000)
-  *   .map(_._1)
-  * draws.map(_(Sigma))
+  * val adapted = NUTS.adapt(latent, warmupKey, latent.init)
+  * val chain = adapted.sample(sampleKey, 2000)
+  * chain(Sigma)
   * }}}
+  *
+  * Several chains are run one per starting position, e.g. each in a `Future`,
+  * as shown at [[Chain]]. For a `latent`, the warmup and the sampling loop are
+  * compiled once, and shared by all chains.
   *
   * `NUTS(latent, stepSize)` instead uses a fixed step size and the identity
   * mass matrix: with many divergences or a low acceptance rate, reduce the
@@ -180,7 +177,7 @@ object NUTS:
       stepSize: Double,
       inverseMassMatrix: InverseMassMatrix[latent.Params]
   ): SamplingAlgorithm[latent.Params, NUTSState[latent.Params], NUTSInfo] =
-    apply[latent.Params](stepSize, inverseMassMatrix)(latent.logDensity)
+    kernel(latent).sampler(stepSize, inverseMassMatrix)
 
   /** NUTS for `logDensity`, for any parameter type. */
   def apply[P: TensorTree](stepSize: Double)(
@@ -197,7 +194,7 @@ object NUTS:
   )(
       logDensity: P => Tensor0[Float32]
   ): SamplingAlgorithm[P, NUTSState[P], NUTSInfo] =
-    sampler(PyBridge.toPyFn(logDensity), py.Any.from(stepSize), inverseMassMatrix.toPy)
+    Kernel[P](PyBridge.toPyFn(logDensity)).sampler(stepSize, inverseMassMatrix)
 
   /** Runs Stan's window adaptation for the posterior of `latent`, starting
     * from `initial`: `numSteps` NUTS steps, during which the step size is
@@ -207,173 +204,144 @@ object NUTS:
     * The mass matrix is diagonal, or `dense` over all parameter elements. A
     * dense one captures correlations, but it needs more warmup steps to be
     * estimated well.
+    *
+    * The warmup is compiled on the first call for `latent`, and reused by
+    * later ones with the same settings, e.g. for further chains; so is the
+    * sampling loop of the adapted sampler.
     */
   def adapt(
       latent: Latent,
-      initial: latent.Params,
       key: Key,
+      initial: latent.Params,
       numSteps: Int = 1000,
       dense: Boolean = false,
       targetAcceptanceRate: Double = 0.8
   ): NUTSAdaptation[latent.Params] =
-    adapt[latent.Params](initial, key, numSteps, dense, targetAcceptanceRate)(
-      latent.logDensity
-    )
+    kernel(latent).adapt(key, initial, numSteps, dense, targetAcceptanceRate)
 
   /** Runs Stan's window adaptation for `logDensity`, for any parameter type.
-    * See the other `adapt`.
+    * See the other `adapt`. Each call compiles the warmup anew: for several
+    * chains, prefer the `adapt` for a [[Latent]].
     */
   def adapt[P: TensorTree](
-      initial: P,
       key: Key,
+      initial: P,
       numSteps: Int,
       dense: Boolean,
       targetAcceptanceRate: Double
   )(
       logDensity: P => Tensor0[Float32]
   ): NUTSAdaptation[P] =
-    val pyLogDensity = PyBridge.toPyFn(logDensity)
-    val warmup = windowAdaptation(pyLogDensity, dense, targetAcceptanceRate)
-    val result = warmup.run(key.jaxKey, TensorTree[P].toPyTree(initial), numSteps)
-    val adapted = result.bracketAccess(0)
-    adaptation[P](
-      pyLogDensity,
-      adapted.state.position,
-      adapted.parameters.bracketAccess("step_size"),
-      adapted.parameters.bracketAccess("inverse_mass_matrix"),
-      dense,
-      result.bracketAccess(1).info.is_divergent.sum()
+    Kernel[P](PyBridge.toPyFn(logDensity)).adapt(key, initial, numSteps, dense, targetAcceptanceRate)
+
+  /** The kernel of `latent`, made once and kept with it. */
+  private def kernel(latent: Latent): Kernel[latent.Params] =
+    latent
+      .cached("nuts")(Kernel[latent.Params](PyBridge.toPyFn(latent.logDensity)))
+      .asInstanceOf[Kernel[latent.Params]]
+
+  /** NUTS for one log-density, with the compiled parts that all its samplers
+    * share: the step and the sampling loop, which take the step size and the
+    * inverse mass matrix from the state, and the warmups.
+    */
+  private final class Kernel[P: TensorTree](pyLogDensity: py.Dynamic):
+    private val blackjax = py.module("blackjax")
+    private val loops = SamplingAlgorithm.Loops()
+    private val warmups = scala.collection.concurrent.TrieMap.empty[(Int, Boolean, Double), py.Dynamic]
+
+    private val step = jit((key: Key, state: NUTSState[P]) =>
+      val nuts = blackjax.nuts(
+        pyLogDensity,
+        TensorTree[Tensor0[Float32]].toPyTree(state.stepSize),
+        state.pyInverseMass
+      )
+      val result = nuts.step(key.jaxKey, state.toPy)
+      (
+        NUTSState.fromPy[P](result.bracketAccess(0), state.stepSize, state.inverseMass),
+        NUTSInfo.fromPy(result.bracketAccess(1))
+      )
     )
 
-  /** Runs Stan's window adaptation for the posterior of `latent` for several
-    * chains, one per starting position in `initials`, side by side in one
-    * compiled loop. Each chain is tuned on its own, so that differences
-    * between them show up in diagnostics such as [[Diagnostics.rhat]]. See
-    * [[adapt]] for the parameters.
-    *
-    * {{{
-    * val Seq(initKey, warmupKey, sampleKey) = key.split(3)
-    * val starts = initKey.split(4).map(latent.initRandom(_))
-    * val adapted = NUTS.adaptChains(latent, starts, warmupKey)
-    * val chains = adapted.sample(sampleKey, 1000).map(_.map(_._1))
-    * Diagnostics.rhat(chains.map(_.map(_(Sigma))))
-    * }}}
-    *
-    * Each call compiles the warmup anew. To run it several times, e.g. for
-    * other starting positions, create it once with [[chainsWarmup]].
-    *
-    * The chains should start from different positions, e.g. from
-    * [[Latent.initRandom]]: from one position, they only differ by their
-    * keys, which makes problems harder to detect.
-    */
-  def adaptChains(
-      latent: Latent,
-      initials: Seq[latent.Params],
-      key: Key,
-      numSteps: Int = 1000,
-      dense: Boolean = false,
-      targetAcceptanceRate: Double = 0.8
-  ): NUTSChainsAdaptation[latent.Params] =
-    chainsWarmup(latent, numSteps, dense, targetAcceptanceRate).run(initials, key)
+    def sampler(
+        stepSize: Double,
+        inverseMassMatrix: InverseMassMatrix[P]
+    ): SamplingAlgorithm[P, NUTSState[P], NUTSInfo] =
+      sampler(Tensor0(stepSize.toFloat), p => flatMass(inverseMassMatrix.toPy(p)))
 
-  /** Runs Stan's window adaptation for several chains of `logDensity`, for
-    * any parameter type. See the other `adaptChains`.
-    */
-  def adaptChains[P: TensorTree](
-      initials: Seq[P],
-      key: Key,
-      numSteps: Int,
-      dense: Boolean,
-      targetAcceptanceRate: Double
-  )(
-      logDensity: P => Tensor0[Float32]
-  ): NUTSChainsAdaptation[P] =
-    chainsWarmup[P](numSteps, dense, targetAcceptanceRate)(logDensity).run(initials, key)
-
-  /** The window adaptation of [[adaptChains]] for the posterior of `latent`,
-    * to run several times: it is compiled once, on its first run.
-    * {{{
-    * val warmup = NUTS.chainsWarmup(latent)
-    * val adapted = warmup.run(starts, warmupKey)
-    * }}}
-    */
-  def chainsWarmup(
-      latent: Latent,
-      numSteps: Int = 1000,
-      dense: Boolean = false,
-      targetAcceptanceRate: Double = 0.8
-  ): NUTSChainsWarmup[latent.Params] =
-    chainsWarmup[latent.Params](numSteps, dense, targetAcceptanceRate)(latent.logDensity)
-
-  /** The window adaptation of [[adaptChains]] for `logDensity`, for any
-    * parameter type. See the other `chainsWarmup`.
-    */
-  def chainsWarmup[P: TensorTree](
-      numSteps: Int,
-      dense: Boolean,
-      targetAcceptanceRate: Double
-  )(
-      logDensity: P => Tensor0[Float32]
-  ): NUTSChainsWarmup[P] =
-    NUTSChainsWarmup(PyBridge.toPyFn(logDensity), numSteps, dense, targetAcceptanceRate)
-
-  /** Runs `warmup`, from [[compiledWarmup]], for one chain per starting
-    * position; the adapted chains sample with `loop`, from [[chainsLoop]].
-    */
-  private[inference] def runChainsWarmup[P: TensorTree](
-      initials: Seq[P],
-      key: Key,
-      dense: Boolean,
-      pyLogDensity: py.Dynamic,
-      warmup: py.Dynamic,
-      loop: py.Dynamic
-  ): NUTSChainsAdaptation[P] =
-    require(initials.nonEmpty, "the warmup needs at least one starting position")
-    val keys = py.module("jax.random").split(key.jaxKey, initials.size)
-    val starts = SamplingAlgorithm.stack(initials.map(TensorTree[P].toPyTree(_)))
-    val results = warmup(keys, starts)
-    val itemgetter = py.module("operator").itemgetter
-    val perChain = initials.indices.map: c =>
-      val row = py.module("jax.tree_util").tree_map(itemgetter(c), results)
-      (row.bracketAccess(0), row.bracketAccess(1), row.bracketAccess(2), row.bracketAccess(3))
-    val chains = perChain.map: (position, stepSize, inverseMass, divergent) =>
-      adaptation[P](pyLogDensity, position, stepSize, inverseMass, dense, divergent)
-    val settings = perChain.map: (_, stepSize, inverseMass, _) =>
-      py.Dynamic.global.tuple(Seq(stepSize, inverseMass).toPythonProxy): py.Any
-    NUTSChainsAdaptation(chains, loop, settings)
-
-  /** The window adaptation of several chains, side by side and compiled: it
-    * takes the keys and the starting positions of the chains, stacked, and
-    * returns their positions, step sizes, inverse mass matrices and numbers
-    * of divergences, stacked.
-    */
-  private[inference] def compiledWarmup(
-      pyLogDensity: py.Dynamic,
-      numSteps: Int,
-      dense: Boolean,
-      targetAcceptanceRate: Double
-  ): py.Dynamic =
-    val jax = py.module("jax")
-    val warmup = windowAdaptation(pyLogDensity, dense, targetAcceptanceRate)
-    val runOne = (k: py.Dynamic, position: py.Dynamic) =>
-      val result = warmup.run(k, position, numSteps)
-      val adapted = result.bracketAccess(0)
-      py.Dynamic.global.tuple(
-        Seq(
-          adapted.state.position,
-          adapted.parameters.bracketAccess("step_size"),
-          adapted.parameters.bracketAccess("inverse_mass_matrix"),
-          result.bracketAccess(1).info.is_divergent.sum()
-        ).toPythonProxy
+    /** The sampler with the given settings; the inverse mass matrix for a
+      * position, in [[NUTSState]]'s representation.
+      */
+    private def sampler(
+        stepSize: Tensor0[Float32],
+        inverseMass: P => Tensor1[MassElement, Float32]
+    ): SamplingAlgorithm[P, NUTSState[P], NUTSInfo] =
+      SamplingAlgorithm.sharing(
+        init = position =>
+          NUTSState.fromPy[P](
+            blackjax.mcmc.hmc.init(TensorTree[P].toPyTree(position), pyLogDensity),
+            stepSize,
+            inverseMass(position)
+          ),
+        step = step,
+        loops = loops
       )
-    jax.jit(jax.vmap(dimwit.jax.Jax.jax_helper.wrap_fn(runOne)))
 
-  /** The compiled sampling loop of adapted chains, whose settings are their
-    * step sizes and inverse mass matrices.
-    */
-  private[inference] def chainsLoop[P: TensorTree](pyLogDensity: py.Dynamic): py.Dynamic =
-    SamplingAlgorithm.chainsLoop[P, NUTSState[P], NUTSInfo]: s =>
-      sampler[P](pyLogDensity, s.bracketAccess(0), _ => s.bracketAccess(1))
+    def adapt(
+        key: Key,
+        initial: P,
+        numSteps: Int,
+        dense: Boolean,
+        targetAcceptanceRate: Double
+    ): NUTSAdaptation[P] =
+      val warmup = warmups.getOrElseUpdate(
+        (numSteps, dense, targetAcceptanceRate),
+        compiledWarmup(numSteps, dense, targetAcceptanceRate)
+      )
+      val result = warmup(key.jaxKey, TensorTree[P].toPyTree(initial))
+      val pyPosition = result.bracketAccess(0)
+      val pyStepSize = result.bracketAccess(1)
+      val pyInverseMass = result.bracketAccess(2)
+      val inverseMassMatrix: InverseMassMatrix[P] =
+        if dense then InverseMassMatrix.Dense(pyInverseMass)
+        else
+          val unravel =
+            py.module("jax.flatten_util").ravel_pytree(pyPosition).bracketAccess(1)
+          InverseMassMatrix.Diagonal(TensorTree[P].fromPyTree(unravel(pyInverseMass)))
+      val mass = flatMass(pyInverseMass)
+      NUTSAdaptation(
+        sampler = sampler(TensorTree[Tensor0[Float32]].fromPyTree(pyStepSize), _ => mass),
+        position = TensorTree[P].fromPyTree(pyPosition),
+        stepSize = pyStepSize.item().as[Double],
+        inverseMassMatrix = inverseMassMatrix,
+        numDivergent = result.bracketAccess(3).item().as[Int]
+      )
+
+    /** The window adaptation, compiled: it takes a key and a starting
+      * position, and returns the final position, the step size, the inverse
+      * mass matrix and the number of divergences.
+      */
+    private def compiledWarmup(
+        numSteps: Int,
+        dense: Boolean,
+        targetAcceptanceRate: Double
+    ): py.Dynamic =
+      val warmup = windowAdaptation(pyLogDensity, dense, targetAcceptanceRate)
+      val runOne = (k: py.Dynamic, position: py.Dynamic) =>
+        val result = warmup.run(k, position, numSteps)
+        val adapted = result.bracketAccess(0)
+        py.Dynamic.global.tuple(
+          Seq(
+            adapted.state.position,
+            adapted.parameters.bracketAccess("step_size"),
+            adapted.parameters.bracketAccess("inverse_mass_matrix"),
+            result.bracketAccess(1).info.is_divergent.sum()
+          ).toPythonProxy
+        )
+      py.module("jax").jit(dimwit.jax.Jax.jax_helper.wrap_fn(runOne))
+
+    /** BlackJax's inverse mass matrix, flattened as in [[NUTSState]]. */
+    private def flatMass(raw: py.Dynamic): Tensor1[MassElement, Float32] =
+      TensorTree[Tensor1[MassElement, Float32]].fromPyTree(py.module("jax.numpy").ravel(raw))
 
   /** BlackJax's window adaptation of NUTS, which keeps only the divergences
     * of the warmup steps, not their states.
@@ -395,59 +363,4 @@ object NUTS:
       is_mass_matrix_diagonal = !dense,
       target_acceptance_rate = targetAcceptanceRate,
       adaptation_info_fn = infoFn
-    )
-
-  /** The [[NUTSAdaptation]] for the results of a warmup, given as BlackJax
-    * returns them.
-    */
-  private def adaptation[P: TensorTree](
-      pyLogDensity: py.Dynamic,
-      pyPosition: py.Dynamic,
-      pyStepSize: py.Dynamic,
-      pyInverseMass: py.Dynamic,
-      dense: Boolean,
-      pyNumDivergent: py.Dynamic
-  ): NUTSAdaptation[P] =
-    val inverseMassMatrix: InverseMassMatrix[P] =
-      if dense then InverseMassMatrix.Dense(pyInverseMass)
-      else
-        val unravel =
-          py.module("jax.flatten_util").ravel_pytree(pyPosition).bracketAccess(1)
-        InverseMassMatrix.Diagonal(TensorTree[P].fromPyTree(unravel(pyInverseMass)))
-    NUTSAdaptation(
-      sampler = sampler(pyLogDensity, pyStepSize, inverseMassMatrix.toPy),
-      position = TensorTree[P].fromPyTree(pyPosition),
-      stepSize = pyStepSize.item().as[Double],
-      inverseMassMatrix = inverseMassMatrix,
-      numDivergent = pyNumDivergent.item().as[Int]
-    )
-
-  /** The NUTS sampler for `pyLogDensity`, with the inverse mass matrix in
-    * BlackJax's representation for a position. Its step is compiled, and it is
-    * traceable, so [[SamplingAlgorithm.sample]] can run it in a loop.
-    */
-  private[witdraw] def sampler[P: TensorTree](
-      pyLogDensity: py.Dynamic,
-      stepSize: py.Any,
-      inverseMassMatrix: P => py.Dynamic
-  ): SamplingAlgorithm[P, NUTSState[P], NUTSInfo] =
-    val blackjax = py.module("blackjax")
-    val step = jit((key: Key, state: NUTSState[P]) =>
-      val nuts = blackjax.nuts(
-        pyLogDensity,
-        stepSize,
-        inverseMassMatrix(state.position)
-      )
-      val result = nuts.step(key.jaxKey, state.toPy)
-      (
-        NUTSState.fromPy[P](result.bracketAccess(0)),
-        NUTSInfo.fromPy(result.bracketAccess(1))
-      )
-    )
-    SamplingAlgorithm(
-      init = position =>
-        NUTSState.fromPy[P](
-          blackjax.mcmc.hmc.init(TensorTree[P].toPyTree(position), pyLogDensity)
-        ),
-      step = step
     )

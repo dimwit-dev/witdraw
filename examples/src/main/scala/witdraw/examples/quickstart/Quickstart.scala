@@ -71,17 +71,13 @@ object Quickstart:
         model(xData)
 
     val (warmupKey, sampleKey) = nutsKey.split2()
-    val adapted = NUTS.adapt(latent, latent.init, warmupKey, numSteps = 1000)
+    val adapted = NUTS.adapt(latent, warmupKey, latent.init, numSteps = 1000)
     val nSamples = 5000
-    val (samples, infos) = adapted.sampler
-      .run(adapted.position, sampleKey)
-      .take(nSamples)
-      .toList
-      .unzip
+    val (samples, infos) = adapted.sample(sampleKey, nSamples).draws.unzip
 
     trait Draw derives Label
 
-    def summary[T <: Tuple: Labels](draws: List[Tensor[T, Float32]]) =
+    def summary[T <: Tuple: Labels](draws: Seq[Tensor[T, Float32]]) =
       val stacked = stack(draws, Axis[Draw])
       (stacked.mean(Axis[Draw]), stacked.std(Axis[Draw]))
 

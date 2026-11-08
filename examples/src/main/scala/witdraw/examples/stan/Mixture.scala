@@ -220,13 +220,9 @@ object Mixture:
 
     // The warmup tunes the step size and the mass matrix.
     val (warmupKey, sampleKey) = Key(3L).split2()
-    val adapted = NUTS.adapt(posterior, start, warmupKey, numSteps = 500)
+    val adapted = NUTS.adapt(posterior, warmupKey, start, numSteps = 500)
     println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
-    val (samples, infos) = adapted.sampler
-      .run(adapted.position, sampleKey)
-      .take(1000)
-      .toList
-      .unzip
+    val (samples, infos) = adapted.sample(sampleKey, 1000).draws.unzip
     println(
       f"NUTS divergences: ${infos.count(_.isDivergent)} / ${samples.size}"
     )

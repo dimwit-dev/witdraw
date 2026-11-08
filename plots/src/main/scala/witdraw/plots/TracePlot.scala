@@ -9,18 +9,17 @@ import dimwit.*
 import dimwit.tensor.Labels
 
 import witdraw.{SiteDef, SiteReader, SiteValues}
-import witdraw.inference.{Diagnostics, Draws, SamplerInfo}
+import witdraw.inference.{Diagnostics, SamplerInfo}
 
 /** Trace plots of MCMC chains, in the style of ArviZ's `plot_trace`: for each
   * element of a quantity, one row with the density of every chain on the left
   * and the draws of every chain on the right, with R-hat and the effective
   * sample size in the row's title.
   *
-  * It takes the [[Draws]] of a sampler, and the sites to show, or values
+  * It takes the chains of a sampler, and the sites to show, or values
   * computed from sites, made with [[quantity]]:
   * {{{
-  * val draws = adapted.sample(key, 1000)
-  * display(tracePlot(draws)(
+  * display(tracePlot(chains)(
   *   Sigma, Tau,
   *   quantity("beta", predictorNames)(v => shrunk(v(Z), v(Tau), v(Lambda)))
   * ))
@@ -61,17 +60,16 @@ object TracePlot:
       (chains, divergent) => rows(name, chains.map(_.map(f)), elementNames, divergent, diagnostics = true)
     )
 
-  /** The trace plots of `quantities`, one below the other, from the draws of
-    * a sampler, as from `NUTSChainsAdaptation.sample` or
-    * `SamplingAlgorithm.sampleChains`. Divergent transitions are marked on the
-    * traces.
+  /** The trace plots of `quantities`, one below the other, from the chains of
+    * a sampler, all of the same length. Divergent transitions are marked on
+    * the traces.
     */
-  def tracePlot[P, I](draws: Draws[P, I])(
+  def tracePlot[P, I](chains: Seq[witdraw.inference.Chain[P, I]])(
       quantities: (SiteDef[?, Float32] | Quantity)*
   )(using reader: SiteReader[P], info: SamplerInfo[I]): VegaLiteSpec =
     require(quantities.nonEmpty, "no quantities given")
-    val values = draws.values(reader.values)
-    val divergent = draws.divergent
+    val values = chains.map(_.values(reader.values))
+    val divergent = chains.map(_.divergent)
     val all = quantities
       .map:
         case q: Quantity                         => q

@@ -5,6 +5,9 @@ import dimwit.*
 import dimwit.stats.{Gamma, HalfNormal, Normal, StudentT}
 import io.github.quafadas.table.*
 import scala.NamedTuple.{Names, DropNames}
+import scala.concurrent.{Await, Future, blocking}
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration.Duration
 import witdraw.*
 import witdraw.distributions.{Half, Inverse}
 import witdraw.inference.{Diagnostics, NUTS}
@@ -151,22 +154,36 @@ object MVRegression:
 
     val numChains = 4
     val numDraws = 1000
-    val Seq(initKey, warmupKey, sampleKey) = Random.Key(42).split(3)
+    val Seq(initKey, chainsKey) = Random.Key(42).split(2)
     val starts = initKey.split(numChains).map(posterior.initRandom(_))
-    // The horseshoe has a funnel-shaped posterior: a higher target acceptance
-    // rate, as in the PyMC example, gives smaller steps and fewer divergences.
-    val adapted = NUTS.adaptChains(
-      posterior,
-      starts,
-      warmupKey,
-      numSteps = 1000,
-      targetAcceptanceRate = 0.99
+    // One chain: a warmup of its own, then sampling. The horseshoe has a
+    // funnel-shaped posterior: a higher target acceptance rate, as in the PyMC
+    // example, gives smaller steps and fewer divergences.
+    def chain(key: Random.Key, start: posterior.Params) =
+      val (warmupKey, sampleKey) = key.split2()
+      val adapted = NUTS.adapt(
+        posterior,
+        warmupKey,
+        start,
+        numSteps = 1000,
+        targetAcceptanceRate = 0.99
+      )
+      adapted.sample(sampleKey, numDraws)
+
+    // the chains run at the same time, one per starting position
+    val runs = chainsKey
+      .split(numChains)
+      .zip(starts)
+      .map((key, start) => Future(blocking(chain(key, start))))
+    val chains = Await.result(Future.sequence(runs), Duration.Inf)
+    println(
+      s"NUTS divergences: ${chains.map(_.numDivergent).sum} / ${numChains * numDraws}"
     )
-    val draws = adapted.sample(sampleKey, numDraws)
-    println(s"NUTS divergences: ${draws.numDivergent} / ${numChains * numDraws}")
 
     val betaChains =
-      draws.values(p => shrunkCoefficients(p(Z), p(Tau), p(Lambda))(p(C2)))
+      chains.map(
+        _.values(p => shrunkCoefficients(p(Z), p(Tau), p(Lambda))(p(C2)))
+      )
 
     type Row = (name: String, mean: Float, sd: Float, rhat: Float, ess: Float)
 
@@ -200,10 +217,10 @@ object MVRegression:
 
     val rows =
       Seq(
-        scalarRow("sigma", draws(Sigma)),
-        scalarRow("tau", draws(Tau)),
-        scalarRow("c2", draws(C2)),
-        scalarRow("beta0", draws(Beta0))
+        scalarRow("sigma", chains.map(_(Sigma))),
+        scalarRow("tau", chains.map(_(Tau))),
+        scalarRow("c2", chains.map(_(C2))),
+        scalarRow("beta0", chains.map(_(Beta0)))
       ) ++ vectorRows("beta", betaChains)
 
     println(

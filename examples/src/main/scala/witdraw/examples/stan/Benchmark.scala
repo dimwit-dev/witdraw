@@ -73,7 +73,7 @@ object Benchmark:
       val (sampler, from, numDraws, numWarmupDraws, step, warmupCompile, warmupRun) =
         if adapt then
           val (a, compile, run) =
-            twice(i => NUTS.adapt(latent, start, Key(6L + i), numSteps = nWarmup))
+            twice(i => NUTS.adapt(latent, Key(6L + i), start, numSteps = nWarmup))
           (a.sampler: Sampler, a.position, nSamples, 0, a.stepSize, compile, run)
         else
           val s = stepSize.toDouble
@@ -81,7 +81,7 @@ object Benchmark:
           (NUTS(latent, s): Sampler, start, nWarmup + nSamples, nWarmup, s, 0.0, 0.0)
 
       val (all, samplingCompile, samplingRun) =
-        twice(i => sampler.sample(from, Key(8L + i), numDraws))
+        twice(i => sampler.sample(Key(8L + i), from, numDraws).draws)
 
       val steps = all.map(_._2.numIntegrationSteps)
       val kept = all.drop(numWarmupDraws)

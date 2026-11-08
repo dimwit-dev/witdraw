@@ -260,13 +260,9 @@ object HMM:
     val (warmupKey, sampleKey) = Key(3L).split2()
     // the traced mu is usually not ordered: start from random values instead
     val adapted =
-      NUTS.adapt(posterior, posterior.initRandom(Key(2L)), warmupKey, numSteps = 500)
+      NUTS.adapt(posterior, warmupKey, posterior.initRandom(Key(2L)), numSteps = 500)
     println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
-    val (samples, infos) = adapted.sampler
-      .run(adapted.position, sampleKey)
-      .take(500)
-      .toList
-      .unzip
+    val (samples, infos) = adapted.sample(sampleKey, 500).draws.unzip
     println(
       f"NUTS divergences: ${infos.count(_.isDivergent)} / ${samples.size}"
     )
