@@ -166,7 +166,7 @@ object OceanicExample:
     )
 
     import plotwit.*
-    import plotwit.PlotTargets.websocket
+    import plotwit.PlotTargets.desktopBrowser
     val allPlots = grid(List(List(p1, p2), List(p3, p4)))
 
     display(allPlots)

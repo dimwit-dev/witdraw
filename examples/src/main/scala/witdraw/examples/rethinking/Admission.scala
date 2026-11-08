@@ -11,7 +11,7 @@ import dimwit.stats.Normal
 import dimwit.stats.MVNormal
 import dimwit.stats.Bernoulli
 import witdraw.ForwardSampler
-import plotwit.PlotTargets.websocket
+import plotwit.PlotTargets.desktopBrowser
 import plotwit.{display, grid}
 import witdraw.distributions.LKJ
 import witdraw.Latent
