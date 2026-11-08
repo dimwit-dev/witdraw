@@ -204,7 +204,7 @@ object HMM:
     * prior does not say, so it needs a constraint.
     */
   def latent(y: Tensor1[Time, Float32]): Latent =
-    Latent.discoverWithConstraints(Constraint(Mu, Bijector.ordered[State]))(observed(y))
+    Latent.discover(transform(Mu.withBijector(Bijector.ordered[State]))(observed(y)))
 
   /** Draw parameters from their priors and simulate a length-`n` sequence. */
   def generate(n: Int)(

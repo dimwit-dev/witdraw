@@ -49,6 +49,14 @@ trait SiteDef[T <: Tuple, V](using val labels: Labels[T], owner: Scope):
   /** An observation of this site, to pass to [[observe]]. */
   def :=(value: Tensor[T, V]): Observation[T, V] = Observation(this, value)
 
+  /** This site with `bijector`, to pass to [[transform]], e.g.
+    * `transform(Mu.withBijector(Bijector.ordered[Comp]))(model)`.
+    */
+  def withBijector[TZ <: Tuple: Labels, VZ](
+      bijector: Bijector[Tensor[TZ, VZ], Tensor[T, V]]
+  ): SiteBijector[T, V] =
+    SiteBijector(this, BijectorTo(bijector))
+
   override def toString: String = s"Site($name)"
 
 /** A value for a site, created with `site := value`. */

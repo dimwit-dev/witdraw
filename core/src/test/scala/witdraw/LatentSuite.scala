@@ -10,8 +10,9 @@ class LatentSuite extends munit.FunSuite:
 
   override def beforeAll(): Unit = dimwit.initialize()
 
-  lazy val latent = Latent.discoverWithConstraints(Constraint(Sigma, Bijector.exp)):
-    observe(Y := yData)(model)
+  lazy val latent = Latent.discover:
+    transform(Sigma.withBijector(Bijector.exp)):
+      observe(Y := yData)(model)
 
   test("Latent finds the latent sites and starts from the traced values"):
     assertEquals(latent.sites, Seq(Mu, Sigma))
@@ -53,11 +54,12 @@ class LatentSuite extends munit.FunSuite:
     // d/dmu at mu = 0, sigma = 1: sum(y) - mu / 100
     assertEqualsFloat(grad(Mu).item, 1.5f, 1e-4f)
 
-  test("Latent errors: unknown site, constraint on observed site"):
+  test("Latent errors: unknown site, bijector on observed site"):
     intercept[NoSuchElementException](latent.init(Y))
     intercept[IllegalArgumentException]:
-      Latent.discoverWithConstraints(Constraint(Y, Bijector.exp[Tuple1[Sample]])):
-        observe(Y := yData)(model)
+      Latent.discover:
+        transform(Y.withBijector(Bijector.exp[Tuple1[Sample]])):
+          observe(Y := yData)(model)
 
   trait Comp derives Label
   trait CompZ derives Label
@@ -73,10 +75,12 @@ class LatentSuite extends munit.FunSuite:
       )
     )
 
-  final lazy val mixture = Latent.discoverWithConstraints(
-    Constraint(Weights, Bijector.simplexStickBreaking[CompZ, Comp]),
-    Constraint(Locs, Bijector.ordered[Comp])
-  )(mixturePrior)
+  final lazy val mixture = Latent.discover:
+    transform(
+      Weights.withBijector(Bijector.simplexStickBreaking[CompZ, Comp]),
+      Locs.withBijector(Bijector.ordered[Comp])
+    ):
+      mixturePrior
 
   test("a constraint may change the shape: simplex from K-1 coordinates"):
     val weights = Tensor1(Axis[Comp]).fromArray(Array(0.2f, 0.5f, 0.3f))
@@ -101,8 +105,9 @@ class LatentSuite extends munit.FunSuite:
   test("initRandom works when the traced value lies outside its constraint"):
     // the traced value is about -10, which the exp constraint cannot reach
     object Neg extends Site[Tensor0[Float32]]
-    val constrained = Latent.discoverWithConstraints(Constraint(Neg, Bijector.exp)):
-      Neg ~ Normal(-10f, 0.1f)
+    val constrained = Latent.discover:
+      transform(Neg.withBijector(Bijector.exp)):
+        Neg ~ Normal(-10f, 0.1f)
     intercept[IllegalArgumentException](constrained.init)
     val start = constrained.initRandom(Key(3))
     assert(start(Neg).item > 0f)

@@ -6,7 +6,6 @@ import dimwit.stats.Exponential
 import dimwit.stats.Normal
 import dimwit.stats.Uniform
 import viz.macros.BoolField
-import witdraw.Constraint
 import witdraw.Latent
 import witdraw.ProbContext
 import witdraw.Site
