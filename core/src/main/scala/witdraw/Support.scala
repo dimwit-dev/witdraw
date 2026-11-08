@@ -52,7 +52,7 @@ enum Support[T <: Tuple, V]:
 
   /** No [[SupportOf]] instance was found, e.g. because the distribution was
     * passed around as a plain `Distribution`. A latent site with an unknown
-    * support needs an explicit [[Constraint]].
+    * support needs a bijector from [[transform]].
     */
   case Unknown[T <: Tuple, V]() extends Support[T, V]
 
@@ -68,36 +68,36 @@ object Support:
     * `None` for an unknown or discrete support, or a [[Rowwise]] support with
     * rows that have no bijector.
     */
-  private[witdraw] def transform[T <: Tuple: Labels](
+  private[witdraw] def bijectorFor[T <: Tuple: Labels](
       s: Support[T, Float32]
-  ): Option[Transform[T, Float32]] =
+  ): Option[BijectorTo[T, Float32]] =
     s match
-      case Real()           => Some(Transform.identity)
-      case GreaterThan(lo)  => Some(Transform(Bijector.lowerBound(lo)))
-      case Interval(lo, hi) => Some(Transform(Bijector.interval(lo, hi)))
+      case Real()           => Some(BijectorTo.identity)
+      case GreaterThan(lo)  => Some(BijectorTo(Bijector.lowerBound(lo)))
+      case Interval(lo, hi) => Some(BijectorTo(Bijector.interval(lo, hi)))
       case c: Custom[T, Float32, tz, vz] @unchecked =>
         given Labels[tz] = c.zLabels
-        Some(Transform(c.bijector))
+        Some(BijectorTo(c.bijector))
       case r: Rowwise[rr, l, Float32] @unchecked =>
         given Label[rr] = r.rowLabel
         given Label[l] = r.label
-        rowwiseTransform[rr, l](r.row)
+        rowwiseBijectorTo[rr, l](r.row)
       case s: Simplex[l, Float32] @unchecked =>
         given Label[l] = s.label
-        Some(Transform(Bijector.simplexStickBreaking[Unconstrained, l]))
+        Some(BijectorTo(Bijector.simplexStickBreaking[Unconstrained, l]))
       case s: CorrelationMatrix[l, Float32] @unchecked =>
         given Label[l] = s.label
-        Some(Transform(Bijector.correlationMatrix[Unconstrained, l]))
+        Some(BijectorTo(Bijector.correlationMatrix[Unconstrained, l]))
       case Discrete() | Unknown() => None
 
   /** A bijector per row, for a [[Rowwise]] support. */
-  private def rowwiseTransform[R: Label, L: Label](
+  private def rowwiseBijectorTo[R: Label, L: Label](
       row: Support[Tuple1[L], Float32]
-  ): Option[Transform[(R, L), Float32]] =
+  ): Option[BijectorTo[(R, L), Float32]] =
     def rowwise[LZ: Label](
         b: Bijector[Tensor1[LZ, Float32], Tensor1[L, Float32]]
-    ): Transform[(R, L), Float32] =
-      Transform(Bijector.rowwise[R, LZ, L](b))
+    ): BijectorTo[(R, L), Float32] =
+      BijectorTo(Bijector.rowwise[R, LZ, L](b))
     row match
       case Real()           => Some(rowwise[L](Bijector.identity))
       case GreaterThan(lo)  => Some(rowwise[L](Bijector.lowerBound(lo)))

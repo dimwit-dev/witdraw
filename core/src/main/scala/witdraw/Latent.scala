@@ -71,7 +71,7 @@ final class Latent private (
     * for a [[Component]] to read them as a typed record.
     */
   def values(params: Params): SiteValues =
-    // one run of the model, for the sites whose transform depends on others
+    // one run of the model, for the sites whose bijector depends on others
     lazy val run = traceOf(substitute(params)(model))
     new SiteValues:
       def apply[T <: Tuple, V](site: SiteDef[T, V]): Tensor[T, V] =
@@ -87,9 +87,10 @@ final class Latent private (
     * `latent.initWith(Sigma := Tensor0(1f))`, and the values of the traced run
     * for the others.
     *
-    * Every value must lie inside its support or constraint, e.g. be positive
-    * for a `HalfNormal` site or increasing for `Bijector.ordered`. A traced
-    * value can lie outside when a constraint is stricter than the model, or
+    * Every value must lie inside its support, or the values of its bijector,
+    * e.g. be positive for a `HalfNormal` site or increasing for
+    * `Bijector.ordered`. A traced value can lie outside when a bijector chosen
+    * with [[transform]] is stricter than the model, or
     * when given values move the support of another site, and then that site
     * needs a given value too.
     */
@@ -98,7 +99,7 @@ final class Latent private (
       values.map(o => slotOf(o.site).site -> o.value).toMap
     def startValue(slot: Slot[?]): Tensor[?, ?] =
       givenValues.getOrElse(slot.site, slot.traced)
-    // the supports at the starting values, for the sites whose transform
+    // the supports at the starting values, for the sites whose bijector
     // depends on others
     lazy val atStart =
       val start = slots.map(slot => slot.observation(startValue(slot)))
@@ -108,7 +109,7 @@ final class Latent private (
       if givenValues.isEmpty then slot.initial
       else
         val t = slot.fixed.getOrElse(
-          slot.transformFor(atStart.entry(slot.site).get.support)
+          slot.bijectorFor(atStart.entry(slot.site).get.support)
         )
         slot.inverse(t, startValue(slot))
     for
@@ -118,7 +119,7 @@ final class Latent private (
       val name = slot.site.name
       val origin = if givenValues.contains(slot.site) then "given" else "traced"
       throw IllegalArgumentException(
-        s"The $origin value of '$name' lies outside its support or constraint ($name = ${startValue(slot)}). " +
+        s"The $origin value of '$name' lies outside its support or bijector ($name = ${startValue(slot)}). " +
           s"Give a starting value inside it with latent.initWith($name := ...)."
       )
     concatenate(parts, Axis[LatentDim])
@@ -132,7 +133,7 @@ final class Latent private (
     */
   def initRandom(key: Random.Key, radius: Float = 2f): Params =
     // the size from the slots: `init` fails when a traced value lies outside
-    // its constraint, which random values need not care about
+    // the values of its bijector, which random values need not care about
     val shape = Shape(Axis[LatentDim] -> slots.map(_.size).sum)
     dimwit.stats
       .Uniform(Tensor(shape).fill(-radius), Tensor(shape).fill(radius))
@@ -166,9 +167,9 @@ final class Latent private (
   /** Runs `model` with the latent sites observed on their values at `params`.
     *
     * The value of a site is computed when the model samples it, through the
-    * transform for the support of that statement, so a support may depend on
+    * bijector for the support of that statement, so a support may depend on
     * the values of the sites before it, e.g. `X ~ Uniform(0, sigma)`.
-    * `addLogJacobian` receives the log-Jacobian of every transform.
+    * `addLogJacobian` receives the log-Jacobian of every bijector.
     */
   private def substitute[A](
       params: Flat,
@@ -182,7 +183,7 @@ final class Latent private (
           bySite.get(statement.site) match
             case None       => outer.sample(statement)
             case Some(slot) =>
-              val t = slot.transformFor(statement.support)
+              val t = slot.bijectorFor(statement.support)
               val (value, logDetJac) = slot.forward(t, slot.part(params))
               addLogJacobian(logDetJac)
               outer.sample(
@@ -202,15 +203,6 @@ final class Latent private (
 
 object Latent:
 
-  /** The latent sites of `model`, each sampled through the bijector that
-    * matches the support of its distribution. See [[discoverWithConstraints]]
-    * for how it works, and to choose the bijector of some sites yourself.
-    * {{{
-    * val latent = Latent.discover(observe(Y := y)(model(x)))
-    * }}}
-    */
-  def discover(model: ProbProg[Any]): Latent = discoverWithConstraints()(model)
-
   /** Runs `model` forward once, and collects its latent sites: the sites that
     * are not observed. The values of that run are the default starting point,
     * [[Latent.init]].
@@ -226,18 +218,23 @@ object Latent:
     * [[Support]] of its distribution, e.g. on the log scale for `HalfNormal` or
     * by stick-breaking for `Dirichlet`. The bijector is built anew in every run
     * of the model, so a support may depend on other sites, e.g.
-    * `X ~ Uniform(0, sigma)`. `constraints` overrides the bijector for some
-    * sites, e.g. `Constraint(Mu, Bijector.ordered[Comp])`. A latent site whose
-    * support is unknown needs a constraint.
+    * `X ~ Uniform(0, sigma)`. [[transform]] chooses the bijector of some sites
+    * instead, e.g. `transform(Mu.withBijector(Bijector.ordered[Comp]))`. A
+    * latent site whose support is unknown needs one.
+    * {{{
+    * val latent = Latent.discover:
+    *   transform(Mu.withBijector(Bijector.ordered[Comp])):
+    *     observe(Y := y)(model(x))
+    * }}}
     */
-  def discoverWithConstraints(constraints: Constraint[?, ?]*)(model: ProbProg[Any]): Latent =
+  def discover(model: ProbProg[Any]): Latent =
     val tr = traceOf(model)
     // A second run, with other values, only to make reading values fast. A
     // site whose support is the same in both runs, e.g. HalfNormal(0, 1), does
     // not depend on other sites, so `params(site)` computes its value directly.
     // A site whose support changes, e.g. Uniform(0, sigma), needs a run of the
     // model to read its value, as only that run knows the current sigma.
-    // Sampling does not use this: `substitute` builds every transform from the
+    // Sampling does not use this: `substitute` builds every bijector from the
     // support of the current run. Without the second run, `params(site)` would
     // have to run the model for every site, e.g. 5000 runs to summarise 5
     // sites over 1000 draws.
@@ -245,13 +242,10 @@ object Latent:
     val latentSites = tr.latentSites
     def names = latentSites.map(_.name).mkString(", ")
 
-    for (site, cs) <- constraints.groupBy(_.site) if cs.size > 1 do
+    for e <- tr.entries if e.observed && e.bijector.isDefined do
       throw IllegalArgumentException(
-        s"Site '${site.name}' has more than one constraint."
-      )
-    for c <- constraints if !latentSites.contains(c.site) do
-      throw IllegalArgumentException(
-        s"Site '${c.site.name}' has a constraint, but is not a latent site of the model. Latent sites: $names."
+        s"Site '${e.site.name}' is given a bijector by transform, but is observed. " +
+          s"Only latent sites are sampled through a bijector. Latent sites: $names."
       )
     for site <- latentSites if tr(site).dtype != DType.Float32 do
       throw IllegalArgumentException(
@@ -260,13 +254,10 @@ object Latent:
       )
 
     // latent sites are Float32, as checked above
-    val bySite = constraints
-      .map(c => c.site -> c.transform.asInstanceOf[Transform[Tuple, Float32]])
-      .toMap
     val slots = latentSites.foldLeft(Vector.empty[Slot[?]]): (acc, site) =>
       val offset = acc.lastOption.fold(0)(s => s.offset + s.size)
       val entry = tr.entry(site).get.asInstanceOf[TraceEntry[Tuple, Float32]]
-      acc :+ slotFor(entry, bySite.get(site), otherRun.entry(site), offset)
+      acc :+ slotFor(entry, otherRun.entry(site), offset)
     new Latent(model, slots)
 
   private type Flat = Tensor1[LatentDim, Float32]
@@ -283,15 +274,16 @@ object Latent:
     */
   private def slotFor[T <: Tuple](
       entry: TraceEntry[T, Float32],
-      constraint: Option[Transform[T, Float32]],
       other: => Option[TraceEntry[?, ?]],
       offset: Int
   ): Slot[T] =
-    val t = constraint.getOrElse(defaultTransform(entry))
-    // `fixed`: the transform when it is the same for all values of the other
+    // the bijector chosen with transform, which is the same in every run
+    val chosen = entry.bijector
+    val t = chosen.getOrElse(defaultBijector(entry))
+    // `fixed`: the bijector when it is the same for all values of the other
     // sites, so that the site's value can be read without running the model.
-    // That holds for a constraint, and for a support that is the same in
-    // another run with other values (see `discoverWithConstraints`). A custom support cannot
+    // That holds for a chosen bijector, and for a support that is the same in
+    // another run with other values (see `discover`). A custom support cannot
     // be compared, as its bijector is a new object in every run, so it is read
     // through the model. `fixed` only speeds up reading: if it were wrong,
     // `params(site)` would show a wrong value, but sampling would still be
@@ -299,7 +291,7 @@ object Latent:
     def supportIsFixed = entry.support match
       case _: Support.Custom[?, ?, ?, ?] => false
       case support                       => other.exists(_.support == support)
-    val fixed = constraint.orElse(Option.when(supportIsFixed)(t))
+    val fixed = chosen.orElse(Option.when(supportIsFixed)(t))
 
     given TensorTree[t.Z] = t.zTree
     val z = t.bijector.inverse(entry.value)
@@ -311,19 +303,19 @@ object Latent:
       initial.shape.size,
       entry.value,
       initial,
-      constraint,
+      chosen,
       fixed,
       ravel.flatten.asInstanceOf[Any => Flat],
       ravel.unflatten
     )
 
-  /** The transform for the support of a latent site, traced as `entry`. */
-  private def defaultTransform[T <: Tuple](
+  /** The bijector for the support of a latent site, traced as `entry`. */
+  private def defaultBijector[T <: Tuple](
       entry: TraceEntry[T, Float32]
-  ): Transform[T, Float32] =
+  ): BijectorTo[T, Float32] =
     val name = entry.site.name
     Support
-      .transform(entry.support)(using entry.site.labels)
+      .bijectorFor(entry.support)(using entry.site.labels)
       .getOrElse:
         val distribution = entry.distribution.getClass.getSimpleName
         entry.support match
@@ -331,13 +323,13 @@ object Latent:
             throw IllegalArgumentException(
               s"Site '$name' is latent, but the support of its distribution " +
                 s"($distribution) is unknown, e.g. because it was typed as a plain Distribution. " +
-                s"Give it a Constraint, e.g. Latent.discoverWithConstraints(Constraint($name, Bijector.exp))(model) for positive values, " +
+                s"Give it a bijector, e.g. transform($name.withBijector(Bijector.exp))(model) for positive values, " +
                 "keep the distribution's own type at `~`, or give its class a `given SupportOf`."
             )
           case support =>
             throw IllegalArgumentException(
               s"Site '$name' is latent, and witdraw has no bijector for the support $support of its distribution " +
-                s"($distribution). Give it a Constraint, or give the distribution a Support.Custom with its own bijector."
+                s"($distribution). Give it a bijector with transform, or give the distribution a Support.Custom with its own bijector."
             )
 
   /** The part `[offset, offset + size)` of the parameter vector that holds the
@@ -348,17 +340,17 @@ object Latent:
     *   the site's value in the traced run
     * @param initial
     *   the part for the traced value
-    * @param constraint
-    *   the transform of an explicit [[Constraint]], used in every run
+    * @param chosen
+    *   the bijector chosen with [[transform]], used in every run
     * @param fixed
-    *   the transform, if it is the same for all values of the other sites: the
-    *   constraint, or the transform of a support that does not depend on them.
+    *   the bijector, if it is the same for all values of the other sites: the
+    *   chosen one, or the one of a support that does not depend on them.
     *   Then the site's value can be read without running the model. Only
     *   reading uses it, sampling never does.
     * @param flatten
-    *   the unconstrained value of a transform to its part
+    *   the unconstrained value of a bijector to its part
     * @param unflatten
-    *   a part to the unconstrained value of a transform
+    *   a part to the unconstrained value of a bijector
     */
   private final class Slot[T <: Tuple](
       val site: SiteDef[T, Float32],
@@ -366,22 +358,22 @@ object Latent:
       val size: Int,
       val traced: Tensor[T, Float32],
       val initial: Flat,
-      constraint: Option[Transform[T, Float32]],
-      val fixed: Option[Transform[T, Float32]],
+      chosen: Option[BijectorTo[T, Float32]],
+      val fixed: Option[BijectorTo[T, Float32]],
       flatten: Any => Flat,
       unflatten: Flat => Any
   ):
     def part(params: Flat): Flat =
       params.select(Axis[LatentDim].at(offset until offset + size))
 
-    /** The transform for a statement of this site with the given support: the
-      * constraint, or the transform of the support.
+    /** The bijector for a statement of this site with the given support: the
+      * chosen one, or the one of the support.
       */
-    def transformFor(support: Support[?, ?]): Transform[T, Float32] =
-      constraint.getOrElse:
+    def bijectorFor(support: Support[?, ?]): BijectorTo[T, Float32] =
+      chosen.getOrElse:
         val s = support.asInstanceOf[Support[T, Float32]]
         Support
-          .transform(s)(using site.labels)
+          .bijectorFor(s)(using site.labels)
           .getOrElse(
             throw IllegalStateException(
               s"No bijector for the support $s of '${site.name}'."
@@ -390,17 +382,17 @@ object Latent:
 
     /** The value for the unconstrained part `z`, and `log |det J|` at `z`. */
     def forward(
-        t: Transform[T, Float32],
+        t: BijectorTo[T, Float32],
         z: Flat
     ): (Tensor[T, Float32], Tensor0[Float32]) =
       val zt = unflatten(z).asInstanceOf[t.Z]
       (t.bijector.forward(zt), t.bijector.logDetJac(zt))
 
     /** The unconstrained part for the value `x`. */
-    def inverse(t: Transform[T, Float32], x: Tensor[?, ?]): Flat =
+    def inverse(t: BijectorTo[T, Float32], x: Tensor[?, ?]): Flat =
       flatten(t.bijector.inverse(x.asInstanceOf[Tensor[T, Float32]]))
 
-    /** The site's value at `params`, if its transform is fixed. */
+    /** The site's value at `params`, if its bijector is fixed. */
     def fixedValueIn(params: Flat): Option[Tensor[T, Float32]] =
       fixed.map(t => forward(t, part(params))._1)
 

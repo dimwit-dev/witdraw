@@ -130,7 +130,7 @@ class SupportSuite extends munit.FunSuite:
 
   test("a Dirichlet site is a simplex, and a constraint overrides a default"):
     val latent =
-      Latent.discoverWithConstraints(Constraint(Locs, Bijector.ordered[Comp]))(mixturePrior)
+      Latent.discover(transform(Locs.withBijector(Bijector.ordered[Comp]))(mixturePrior))
     val weights = Tensor1(Axis[Comp]).fromArray(Array(0.2f, 0.5f, 0.3f))
     val locs = Tensor1(Axis[Comp]).fromArray(Array(-1f, 0f, 2f))
     val p = latent.initWith(Weights := weights, Locs := locs)
@@ -157,15 +157,15 @@ class SupportSuite extends munit.FunSuite:
         1e-5f
       )
 
-  test("a latent site with an unknown support needs a constraint"):
+  test("a latent site with an unknown support needs a bijector"):
     def widenedModel(using ProbContext) =
       val widened: Distribution[EmptyTuple, Float32] = HalfNormal(0f, 1f)
       Sigma ~ widened
     val e = intercept[IllegalArgumentException](Latent.discover(widenedModel))
     assert(e.getMessage.contains("'Sigma' is latent"), e.getMessage)
-    assert(e.getMessage.contains("Constraint(Sigma"), e.getMessage)
-    // with a constraint, or observed, the unknown support does not matter
-    Latent.discoverWithConstraints(Constraint(Sigma, Bijector.exp))(widenedModel)
+    assert(e.getMessage.contains("transform(Sigma.withBijector"), e.getMessage)
+    // with a bijector, or observed, the unknown support does not matter
+    Latent.discover(transform(Sigma.withBijector(Bijector.exp))(widenedModel))
     ModelScorer.run(observe(Sigma := Tensor0(1f))(widenedModel))
 
   object X extends Site[Tensor0[Float32]]

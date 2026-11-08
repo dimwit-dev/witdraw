@@ -202,9 +202,10 @@ once, records every site with the `withTrace` handler, and collects the sites
 that are not observed:
 
 ```scala
-val latent = Latent.discoverWithConstraints(Constraint(Sigma, Bijector.exp)):
-  observe(Y := yData):
-    model(xData)
+val latent = Latent.discover:
+  transform(Sigma.withBijector(Bijector.exp)):
+    observe(Y := yData):
+      model(xData)
 ```
 
 ```scala
@@ -232,7 +233,9 @@ negative values, where the model's density is undefined. The standard fix is
 to sample $z = \log \sigma$ instead, which can be any real number.
 
 A `Bijector` describes such a change of variables, and
-`Constraint(Sigma, Bijector.exp)` above applies one to `Sigma`. The sampler
+`transform(Sigma.withBijector(Bijector.exp))` above applies one to `Sigma`.
+Positive distributions such as `HalfCauchy` get a bijector like this by
+default; `transform` chooses one explicitly, or another one. The sampler
 then moves in unconstrained space, and `latent.logDensity` includes the
 Jacobian correction for the change of variables. We never see $z$ ourselves:
 `params(Sigma)` always gives $\sigma = e^z$.
@@ -523,7 +526,7 @@ well as here:
 val lsLatent = Latent.discover:
   observe(outcome.Y := yData):
     outcome(xData)
-// lsLatent: Latent = witdraw.Latent@1927c5b8
+// lsLatent: Latent = witdraw.Latent@79692097
 
 lsLatent.sites.map(_.name)
 // res10: Seq[String] = Vector(

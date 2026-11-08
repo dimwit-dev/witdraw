@@ -81,11 +81,13 @@ class ComponentSuite extends munit.FunSuite:
     )
 
   test("sites of components work with observe and Latent"):
-    val latent = Latent.discoverWithConstraints(
-      Constraint(tv.Effect, Bijector.exp),
-      Constraint(radio.Effect, Bijector.exp),
-      Constraint(Noise, Bijector.exp)
-    )(observe(Y := yData)(model))
+    val latent = Latent.discover:
+      transform(
+        tv.Effect.withBijector(Bijector.exp),
+        radio.Effect.withBijector(Bijector.exp),
+        Noise.withBijector(Bijector.exp)
+      ):
+        observe(Y := yData)(model)
     assertEquals(latent.sites, Seq(tv.Effect, radio.Effect, Noise))
     val p = latent.initWith(
       tv.Effect := Tensor0(2f),
@@ -119,11 +121,13 @@ class ComponentSuite extends munit.FunSuite:
     assertEquals(v.noise.item, tr(Noise).item)
 
   test("a component reads its values as a typed record, from Latent"):
-    val latent = Latent.discoverWithConstraints(
-      Constraint(tv.Effect, Bijector.exp),
-      Constraint(radio.Effect, Bijector.exp),
-      Constraint(Noise, Bijector.exp)
-    )(observe(Y := yData)(model))
+    val latent = Latent.discover:
+      transform(
+        tv.Effect.withBijector(Bijector.exp),
+        radio.Effect.withBijector(Bijector.exp),
+        Noise.withBijector(Bijector.exp)
+      ):
+        observe(Y := yData)(model)
     // the record also gives the observations, e.g. for a starting point
     val p = latent.initWith(media.observations(mediaValues(2f, 0.5f, 1.5f))*)
     val v = media.values(latent.values(p))

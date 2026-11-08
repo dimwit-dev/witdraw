@@ -17,14 +17,36 @@ import scala.collection.mutable
   * samples, or to run a model that samples a site more than once.
   */
 def observe[A](observations: Observation[?, ?]*)(model: ProbProg[A])(using
-    outer: ProbContext
+    ProbContext
 ): A =
-  for (site, obs) <- observations.groupBy(_.site) if obs.size > 1 do
+  intercept("observed", "observe", observations.map(o => o.site -> o.value))(
+    [T <: Tuple, V] =>
+      (statement: SampleStatement[T, V], value: Tensor[?, ?]) =>
+        if statement.observed.isDefined then
+          throw IllegalArgumentException(
+            s"Site '${statement.site.name}' is observed twice, by nested observe blocks."
+          )
+        statement.copy(observed = Some(value.asInstanceOf[Tensor[T, V]]))
+  )(model)
+
+/** Runs `model`, and changes the statement of each site in `sites` with
+  * `change`, e.g. to observe it, before passing it on. `what` and `handler`
+  * name the change and the handler in errors: it is an error to give a site
+  * twice, to give a site the model never samples, or to run a model that
+  * samples a site more than once.
+  */
+private[witdraw] def intercept[A, X](
+    what: String,
+    handler: String,
+    sites: Seq[(SiteDef[?, ?], X)]
+)(
+    change: [T <: Tuple, V] => (SampleStatement[T, V], X) => SampleStatement[T, V]
+)(model: ProbProg[A])(using outer: ProbContext): A =
+  for (site, xs) <- sites.groupBy(_._1) if xs.size > 1 do
     throw IllegalArgumentException(
-      s"Site '${site.name}' is observed more than once in the same observe."
+      s"Site '${site.name}' is $what more than once in the same $handler."
     )
-  val valueOf: Map[SiteDef[?, ?], Any] =
-    observations.map(o => o.site -> o.value).toMap
+  val bySite: Map[SiteDef[?, ?], X] = sites.toMap
   val sampled = mutable.LinkedHashSet.empty[SiteDef[?, ?]]
 
   val result = model(using
@@ -34,20 +56,14 @@ def observe[A](observations: Observation[?, ?]*)(model: ProbProg[A])(using
       ): Tensor[T, V] =
         val site = statement.site
         if !sampled.add(site) then throw sampledTwice(site)
-        valueOf.get(site) match
-          case None        => outer.sample(statement)
-          case Some(value) =>
-            if statement.observed.isDefined then
-              throw IllegalArgumentException(
-                s"Site '${site.name}' is observed twice, by nested observe blocks."
-              )
-            val observed = value.asInstanceOf[Tensor[T, V]]
-            outer.sample(statement.copy(observed = Some(observed)))
+        bySite.get(site) match
+          case None    => outer.sample(statement)
+          case Some(x) => outer.sample(change[T, V](statement, x))
   )
 
-  for site <- valueOf.keys if !sampled.contains(site) do
+  for site <- bySite.keys if !sampled.contains(site) do
     throw IllegalArgumentException(
-      s"Site '${site.name}' is observed, but the model never samples it. " +
+      s"Site '${site.name}' is $what, but the model never samples it. " +
         s"Sites in the model: ${sampled.map(_.name).mkString(", ")}."
     )
   result

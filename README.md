@@ -99,12 +99,14 @@ For inference, `Latent.discover` traces one run of the observed model and
 finds its latent sites, here `alpha`, `beta` and `sigma`. It gives a parameter
 type for them and a starting point, and the inference methods in
 `witdraw.inference` work on it directly: `NUTS` samples the posterior, `MAP`
-finds its mode, and `Laplace` approximates it by a Gaussian. Constraints are
-declared per site:
+finds its mode, and `Laplace` approximates it by a Gaussian. Each latent site
+is sampled through a bijector that matches its distribution's support;
+`transform` chooses another one for some sites:
 
 ```scala
-val posterior = Latent.discoverWithConstraints(Constraint(Sigma, Bijector.exp)):
-  observe(Y := yData)(model(xData))
+val posterior = Latent.discover:
+  transform(Sigma.withBijector(Bijector.exp)):
+    observe(Y := yData)(model(xData))
 
 // warmup tunes the step size and the mass matrix
 val adapted = NUTS.adapt(posterior, Key(3), posterior.init)

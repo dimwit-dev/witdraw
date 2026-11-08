@@ -6,7 +6,8 @@ import dimwit.tensor.Labels
 
 /** A differentiable bijection between an unconstrained value `z` and a value
   * `x` in a constrained space, with the log-determinant of its Jacobian.
-  * [[Constraint]] attaches one to a site.
+  * [[transform]] chooses one for a site, e.g.
+  * `transform(Mu.withBijector(Bijector.ordered[Comp]))(model)`.
   *
   * Inference moves in `z`, so the density of `z` is
   * `logDensity(forward(z)) + logDetJac(z)`, see [[Latent.logDensity]].
