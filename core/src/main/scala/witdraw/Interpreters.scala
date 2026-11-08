@@ -22,6 +22,16 @@ object ForwardSampler:
             statement.distribution.sample(use)
     )
 
+  /** `n` independent runs of `model`, each with its own key, split from
+    * `key`, e.g. draws from the prior predictive distribution:
+    * {{{
+    * val priorPredictive = ForwardSampler.sample(key, 1000)(model(x))
+    * }}}
+    */
+  def sample[A](key: Random.Key, n: Int)(model: ProbProg[A]): Seq[A] =
+    require(n > 0, s"n must be positive, but is $n")
+    key.split(n).map(k => run(k)(model))
+
 /** Computes the log-density of a model in which every site is observed, e.g.
   * the unnormalised log posterior of a model observed on data and parameters. A
   * free site is an error.

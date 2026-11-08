@@ -49,8 +49,7 @@ object Quickstart:
     val yData =
       (xData.dot(Axis[Feature])(betaTrue) +! alphaTrue) + (eps *! sigmaTrue)
 
-    val priorPredictive =
-      priorKey.split(5).map(k => ForwardSampler.run(k)(model(xData)))
+    val priorPredictive = ForwardSampler.sample(priorKey, 5)(model(xData))
 
     priorPredictive.foreach { s =>
       println(
@@ -58,11 +57,10 @@ object Quickstart:
       )
     }
 
-    val withFixedSigma = fixedKey.split(5).map { k =>
-      ForwardSampler.run(k):
+    val withFixedSigma =
+      ForwardSampler.sample(fixedKey, 5):
         observe(Sigma := Tensor0(1f)):
           model(xData)
-    }
 
     withFixedSigma.foreach { s =>
       println(f"sigma=${s.sigma.item}%4.2f  mean(y)=${s.y.mean.item}%8.2f")

@@ -18,6 +18,13 @@ class ProbContextSuite extends munit.FunSuite:
     assertNotEquals(a.mu.item, c.mu.item)
     assert(a.sigma.item > 0f)
 
+  test("ForwardSampler.sample runs the model once per key split from the key"):
+    val draws = ForwardSampler.sample(Key(1), 3)(model)
+    assertEquals(draws.size, 3)
+    val expected = Key(1).split(3).map(k => ForwardSampler.run(k)(model).mu.item)
+    assertEquals(draws.map(_.mu.item), expected)
+    assertEquals(draws.map(_.mu.item).distinct.size, 3)
+
   test("a model can be stored as a ProbProg value and run later"):
     val stored: ProbProg[Tensor0[Float32]] = model.mu
     assertEquals(

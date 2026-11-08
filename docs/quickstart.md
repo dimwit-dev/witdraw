@@ -147,8 +147,11 @@ every variable from its prior, so the `y` values are draws from the *prior
 predictive* distribution:
 
 ```scala
-val priorPredictive = priorKey.split(5).map(k => ForwardSampler.run(k)(model(xData)))
+val priorPredictive = ForwardSampler.sample(priorKey, 5)(model(xData))
 ```
+
+`ForwardSampler.sample` runs the model 5 times, each with its own key split
+from `priorKey`; `ForwardSampler.run(key)(model)` runs it once.
 
 Each sample is a named tuple, so we can print a short summary of each:
 
@@ -169,11 +172,10 @@ The handler `observe` runs a block of code with some sites fixed to given
 values. Here we fix the noise scale to 1 and let everything else vary:
 
 ```scala
-val withFixedSigma = fixedKey.split(5).map { k =>
-  ForwardSampler.run(k):
+val withFixedSigma =
+  ForwardSampler.sample(fixedKey, 5):
     observe(Sigma := Tensor0(1f)):
       model(xData)
-}
 ```
 
 ```scala
@@ -511,7 +513,7 @@ well as here:
 val lsLatent = Latent.discover():
   observe(outcome.Y := yData):
     outcome(xData)
-// lsLatent: Latent = witdraw.Latent@62ca34ba
+// lsLatent: Latent = witdraw.Latent@6e13308d
 
 lsLatent.sites.map(_.name)
 // res10: Seq[String] = Vector(
