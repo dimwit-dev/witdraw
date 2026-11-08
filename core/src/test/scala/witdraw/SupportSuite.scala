@@ -94,7 +94,7 @@ class SupportSuite extends munit.FunSuite:
     )
 
   test("without constraints, a HalfNormal site is sampled on the log scale"):
-    val latent = Latent.discover()(observe(Y := yData)(model))
+    val latent = Latent.discover(observe(Y := yData)(model))
     val p = latent.initWith(Mu := Tensor0(0.3f), Sigma := Tensor0(1.5f))
     assertEqualsFloat(p(Sigma).item, 1.5f, 1e-5f)
     // sigma = exp(z), so log |d sigma / dz| = z = log sigma
@@ -107,7 +107,7 @@ class SupportSuite extends munit.FunSuite:
   object P extends Site[Tensor0[Float32]]
 
   test("a Uniform site is sampled on the logit scale of its interval"):
-    val latent = Latent.discover()(P ~ Uniform(Tensor0(0f), Tensor0(2f)))
+    val latent = Latent.discover(P ~ Uniform(Tensor0(0f), Tensor0(2f)))
     val p = latent.initWith(P := Tensor0(0.5f))
     assertEqualsFloat(p(P).item, 0.5f, 1e-5f)
     // x = 2·σ(z), so log |dx/dz| = log(2·u·(1-u)) with u = x / 2
@@ -130,7 +130,7 @@ class SupportSuite extends munit.FunSuite:
 
   test("a Dirichlet site is a simplex, and a constraint overrides a default"):
     val latent =
-      Latent.discover(Constraint(Locs, Bijector.ordered[Comp]))(mixturePrior)
+      Latent.discoverWithConstraints(Constraint(Locs, Bijector.ordered[Comp]))(mixturePrior)
     val weights = Tensor1(Axis[Comp]).fromArray(Array(0.2f, 0.5f, 0.3f))
     val locs = Tensor1(Axis[Comp]).fromArray(Array(-1f, 0f, 2f))
     val p = latent.initWith(Weights := weights, Locs := locs)
@@ -145,7 +145,7 @@ class SupportSuite extends munit.FunSuite:
   object R extends Site[Tensor2[AB, Prime[AB], Float32]]
 
   test("an LKJ site is a correlation matrix"):
-    val latent = Latent.discover():
+    val latent = Latent.discover:
       R ~ LKJ(Tensor0(2f), Shape(Axis[AB] -> 3, Axis[Prime[AB]] -> 3))
     // one unconstrained value per entry below the diagonal
     assertEquals(numParams(latent)(latent.init), 3)
@@ -161,11 +161,11 @@ class SupportSuite extends munit.FunSuite:
     def widenedModel(using ProbContext) =
       val widened: Distribution[EmptyTuple, Float32] = HalfNormal(0f, 1f)
       Sigma ~ widened
-    val e = intercept[IllegalArgumentException](Latent.discover()(widenedModel))
+    val e = intercept[IllegalArgumentException](Latent.discover(widenedModel))
     assert(e.getMessage.contains("'Sigma' is latent"), e.getMessage)
     assert(e.getMessage.contains("Constraint(Sigma"), e.getMessage)
     // with a constraint, or observed, the unknown support does not matter
-    Latent.discover(Constraint(Sigma, Bijector.exp))(widenedModel)
+    Latent.discoverWithConstraints(Constraint(Sigma, Bijector.exp))(widenedModel)
     ModelScorer.run(observe(Sigma := Tensor0(1f))(widenedModel))
 
   object X extends Site[Tensor0[Float32]]
@@ -175,7 +175,7 @@ class SupportSuite extends munit.FunSuite:
     X ~ Uniform(Tensor0(0f), sigma)
 
   test("a support may depend on another latent site"):
-    val latent = Latent.discover()(boundedBySigma)
+    val latent = Latent.discover(boundedBySigma)
     // X = sigma·σ(z) lies in (0, sigma) for every sigma
     val p = latent.initWith(Sigma := Tensor0(3f), X := Tensor0(2.5f))
     assertEqualsFloat(p(Sigma).item, 3f, 1e-5f)
@@ -196,7 +196,7 @@ class SupportSuite extends munit.FunSuite:
     assertEqualsFloat(latent.modelLogDensity(p).item, expected.item, 1e-4f)
 
   test("a value outside a support that moved with a given value is an error"):
-    val latent = Latent.discover()(boundedBySigma)
+    val latent = Latent.discover(boundedBySigma)
     // X traced inside (0, traced sigma), but not inside (0, 1e-3)
     val e = intercept[IllegalArgumentException]:
       latent.initWith(Sigma := Tensor0(1e-3f))
@@ -213,7 +213,7 @@ class SupportSuite extends munit.FunSuite:
   object M extends Site[Tensor2[Row, Col, Float32]]
 
   test("a Rowwise(Simplex) site has a simplex in every row"):
-    val latent = Latent.discover()(M ~ StochasticMatrix(2, 3))
+    val latent = Latent.discover(M ~ StochasticMatrix(2, 3))
     val rowSums = latent.init(M).sum(Axis[Col])
     for i <- 0 until 2 do
       assertEqualsFloat(rowSums.select(Axis[Row].at(i)).item, 1f, 1e-5f)
@@ -235,14 +235,14 @@ class SupportSuite extends munit.FunSuite:
     val unknownRows: SupportOf[StochasticMatrix, (Row, Col), Float32] =
       _ => Support.Rowwise(Support.Unknown())
     val e = intercept[IllegalArgumentException]:
-      Latent.discover():
+      Latent.discover:
         M.~(StochasticMatrix(2, 3))(using summon[ProbContext], unknownRows)
     assert(e.getMessage.contains("no bijector"), e.getMessage)
 
   object O extends Site[Tensor1[K, Float32]]
 
   test("a Custom support brings its own bijector"):
-    val latent = Latent.discover()(O ~ Increasing(3))
+    val latent = Latent.discover(O ~ Increasing(3))
     val xs = latent.init(O).toArray
     assert(xs.sliding(2).forall(p => p(0) < p(1)), xs.mkString(", "))
     intercept[IllegalArgumentException]:

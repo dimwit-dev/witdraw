@@ -162,7 +162,7 @@ object AdmissionEx:
     // supports off the distributions: the spreads (HalfCauchy) are sampled on
     // the log scale, and R (LKJ) through the correlation bijector, so it stays
     // a correlation matrix.
-    val posterior = Latent.discover():
+    val posterior = Latent.discover:
       observe(Admission := admission)(model)
     println(s"latent sites: ${posterior.sites.map(_.name).mkString(", ")}")
 

@@ -192,7 +192,7 @@ once, records every site with the `withTrace` handler, and collects the sites
 that are not observed:
 
 ```scala mdoc:silent
-val latent = Latent.discover(Constraint(Sigma, Bijector.exp)):
+val latent = Latent.discoverWithConstraints(Constraint(Sigma, Bijector.exp)):
   observe(Y := yData):
     model(xData)
 ```
@@ -500,7 +500,7 @@ how sites with the same declaration are told apart, in error messages as
 well as here:
 
 ```scala mdoc
-val lsLatent = Latent.discover():
+val lsLatent = Latent.discover:
   observe(outcome.Y := yData):
     outcome(xData)
 

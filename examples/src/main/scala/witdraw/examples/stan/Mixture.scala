@@ -165,7 +165,7 @@ object Mixture:
     * ordered, which its Normal prior does not say, so it needs a constraint.
     */
   def latent(y: Tensor1[Data, Float32], k: Int): Latent =
-    Latent.discover(Constraint(Mu, Bijector.ordered[Comp]))(observed(y, k))
+    Latent.discoverWithConstraints(Constraint(Mu, Bijector.ordered[Comp]))(observed(y, k))
 
   /** Draw parameters from their priors and simulate `n` points from a
     * `k`-component mixture.

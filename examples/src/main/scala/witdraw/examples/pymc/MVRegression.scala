@@ -148,7 +148,7 @@ object MVRegression:
     // sigma, tau, lambda and c2 are positive, so Latent samples them on the
     // log scale.
     val posterior =
-      Latent.discover():
+      Latent.discover:
         observe(Scores := y)(model(x))
     println(s"latent sites: ${posterior.sites.map(_.name).mkString(", ")}")
 

@@ -66,7 +66,7 @@ object Quickstart:
       println(f"sigma=${s.sigma.item}%4.2f  mean(y)=${s.y.mean.item}%8.2f")
     }
 
-    val latent = Latent.discover():
+    val latent = Latent.discover:
       observe(Y := yData):
         model(xData)
 

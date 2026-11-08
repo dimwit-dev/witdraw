@@ -103,7 +103,7 @@ finds its mode, and `Laplace` approximates it by a Gaussian. Constraints are
 declared per site:
 
 ```scala
-val posterior = Latent.discover(Constraint(Sigma, Bijector.exp)):
+val posterior = Latent.discoverWithConstraints(Constraint(Sigma, Bijector.exp)):
   observe(Y := yData)(model(xData))
 
 // warmup tunes the step size and the mass matrix

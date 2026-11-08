@@ -81,7 +81,7 @@ class ComponentSuite extends munit.FunSuite:
     )
 
   test("sites of components work with observe and Latent"):
-    val latent = Latent.discover(
+    val latent = Latent.discoverWithConstraints(
       Constraint(tv.Effect, Bijector.exp),
       Constraint(radio.Effect, Bijector.exp),
       Constraint(Noise, Bijector.exp)
@@ -119,7 +119,7 @@ class ComponentSuite extends munit.FunSuite:
     assertEquals(v.noise.item, tr(Noise).item)
 
   test("a component reads its values as a typed record, from Latent"):
-    val latent = Latent.discover(
+    val latent = Latent.discoverWithConstraints(
       Constraint(tv.Effect, Bijector.exp),
       Constraint(radio.Effect, Bijector.exp),
       Constraint(Noise, Bijector.exp)

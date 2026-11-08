@@ -148,7 +148,7 @@ object MissingData:
     // The latent sites (alpha, beta, sigma, muX, sigmaX and the imputed
     // xMis) are found by tracing one run of the observed model. The two
     // scales have HalfCauchy priors, so Latent samples them on the log scale.
-    val latent = Latent.discover()(observed(xObs, yAll, nMissing))
+    val latent = Latent.discover(observed(xObs, yAll, nMissing))
     println(s"latent sites: ${latent.sites.map(_.name).mkString(", ")}")
 
     // NUTS starts from the MAP; the warmup tunes the step size and the mass
