@@ -22,7 +22,7 @@ class LaplaceSuite extends munit.FunSuite:
     def model(using ProbContext) =
       val mu = Mu ~ Normal(0f, 1f)
       Y ~ Normal.isotropic(Tensor1(Axis[Sample] -> 3).fill(0f) +! mu, 1f)
-    val latent = Latent.discover()(observe(Y := yData)(model))
+    val latent = Latent.discover(observe(Y := yData)(model))
     // starts away from the mode, which init finds itself
     val laplace = Laplace(latent)
     val start = latent.initWith(Mu := Tensor0(-2f))

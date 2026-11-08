@@ -21,7 +21,7 @@ class NUTSSuite extends munit.FunSuite:
   def model(using ProbContext) =
     (narrow = Narrow ~ Normal(1f, 0.1f), wide = Wide ~ Normal(-5f, 10f))
 
-  final lazy val latent = Latent.discover()(model)
+  final lazy val latent = Latent.discover(model)
 
   def moments(draws: Seq[Float]): (Float, Float) =
     val mean = draws.sum / draws.size
@@ -133,7 +133,7 @@ class NUTSSuite extends munit.FunSuite:
 
   test("the chains of a latent share the compiled warmup and sampling loop"):
     // a model of its own, so that nothing is compiled for it yet
-    val fresh = Latent.discover()(model)
+    val fresh = Latent.discover(model)
     def chain(key: Key, start: fresh.Params) =
       val (warmupKey, sampleKey) = key.split2()
       val adapted = NUTS.adapt(fresh, warmupKey, start, numSteps = 200)

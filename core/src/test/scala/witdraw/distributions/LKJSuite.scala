@@ -40,7 +40,7 @@ class LKJSuite extends munit.FunSuite:
     object Corr extends Site[Tensor2[D, Prime[D], Float32]]
     trait DZ derives Label
     val (eta, d) = (2f, 3)
-    val latent = Latent.discover(
+    val latent = Latent.discoverWithConstraints(
       Constraint(Corr, Bijector.correlationMatrix[DZ, D])
     )(Corr ~ lkj(eta, d))
     val (warmupKey, sampleKey) = Key(7).split2()

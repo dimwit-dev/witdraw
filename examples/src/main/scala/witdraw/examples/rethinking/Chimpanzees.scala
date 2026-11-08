@@ -126,7 +126,7 @@ object Chimpanzees:
     // The between-chimp spread has an Exponential prior, so Latent samples it
     // on the log scale.
     val posterior =
-      Latent.discover():
+      Latent.discover:
         observe(PulledLeft := pulledLeft)(model)
     println(s"latent sites: ${posterior.sites.map(_.name).mkString(", ")}")
 

@@ -128,7 +128,7 @@ object LocationScale:
     // ---- inference ----------------------------------------------------
     // All parameters are unconstrained: the scales are positive through the
     // log link, so no constraint is needed.
-    val latent = Latent.discover():
+    val latent = Latent.discover:
       observe(
         bloodPressure.Y := ys.bloodPressure,
         cholesterol.Y := ys.cholesterol

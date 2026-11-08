@@ -42,7 +42,7 @@ object WaterLandExample:
     def conditioned(using ProbContext) =
       observe(WaterCount := waterCountData)(model(numTosses))
 
-    val latent = Latent.discover()(conditioned)
+    val latent = Latent.discover(conditioned)
     println(s"Latent sites: ${latent.sites.map(_.name).mkString(", ")}")
 
     val numWarmup = 500

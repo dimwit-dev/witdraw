@@ -14,7 +14,7 @@ trait LatentDim derives Label
   * parameter type for them.
   *
   * {{{
-  * val latent = Latent.discover():
+  * val latent = Latent.discover:
   *   observe(Y := yData)(model(x))
   *
   * val nuts = NUTS[latent.Params](stepSize = 0.05)(latent.logDensity)
@@ -202,6 +202,15 @@ final class Latent private (
 
 object Latent:
 
+  /** The latent sites of `model`, each sampled through the bijector that
+    * matches the support of its distribution. See [[discoverWithConstraints]]
+    * for how it works, and to choose the bijector of some sites yourself.
+    * {{{
+    * val latent = Latent.discover(observe(Y := y)(model(x)))
+    * }}}
+    */
+  def discover(model: ProbProg[Any]): Latent = discoverWithConstraints()(model)
+
   /** Runs `model` forward once, and collects its latent sites: the sites that
     * are not observed. The values of that run are the default starting point,
     * [[Latent.init]].
@@ -221,7 +230,7 @@ object Latent:
     * sites, e.g. `Constraint(Mu, Bijector.ordered[Comp])`. A latent site whose
     * support is unknown needs a constraint.
     */
-  def discover(constraints: Constraint[?, ?]*)(model: ProbProg[Any]): Latent =
+  def discoverWithConstraints(constraints: Constraint[?, ?]*)(model: ProbProg[Any]): Latent =
     val tr = traceOf(model)
     // A second run, with other values, only to make reading values fast. A
     // site whose support is the same in both runs, e.g. HalfNormal(0, 1), does
@@ -282,7 +291,7 @@ object Latent:
     // `fixed`: the transform when it is the same for all values of the other
     // sites, so that the site's value can be read without running the model.
     // That holds for a constraint, and for a support that is the same in
-    // another run with other values (see `discover`). A custom support cannot
+    // another run with other values (see `discoverWithConstraints`). A custom support cannot
     // be compared, as its bijector is a new object in every run, so it is read
     // through the model. `fixed` only speeds up reading: if it were wrong,
     // `params(site)` would show a wrong value, but sampling would still be
@@ -322,7 +331,7 @@ object Latent:
             throw IllegalArgumentException(
               s"Site '$name' is latent, but the support of its distribution " +
                 s"($distribution) is unknown, e.g. because it was typed as a plain Distribution. " +
-                s"Give it a Constraint, e.g. Latent.discover(Constraint($name, Bijector.exp)) for positive values, " +
+                s"Give it a Constraint, e.g. Latent.discoverWithConstraints(Constraint($name, Bijector.exp))(model) for positive values, " +
                 "keep the distribution's own type at `~`, or give its class a `given SupportOf`."
             )
           case support =>

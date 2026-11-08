@@ -12,7 +12,7 @@ class MAPSuite extends munit.FunSuite:
   object Successes extends Site[Tensor0[Int32]]
 
   // p ~ Uniform(0, 1), with 6 successes in 9 trials, on the logit scale
-  lazy val latent = Latent.discover(
+  lazy val latent = Latent.discoverWithConstraints(
     Constraint(P, Bijector.interval(Tensor0(0f), Tensor0(1f)))
   ):
     observe(Successes := Tensor0(6)):

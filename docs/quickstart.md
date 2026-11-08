@@ -202,7 +202,7 @@ once, records every site with the `withTrace` handler, and collects the sites
 that are not observed:
 
 ```scala
-val latent = Latent.discover(Constraint(Sigma, Bijector.exp)):
+val latent = Latent.discoverWithConstraints(Constraint(Sigma, Bijector.exp)):
   observe(Y := yData):
     model(xData)
 ```
@@ -520,10 +520,10 @@ how sites with the same declaration are told apart, in error messages as
 well as here:
 
 ```scala
-val lsLatent = Latent.discover():
+val lsLatent = Latent.discover:
   observe(outcome.Y := yData):
     outcome(xData)
-// lsLatent: Latent = witdraw.Latent@6041cccd
+// lsLatent: Latent = witdraw.Latent@1927c5b8
 
 lsLatent.sites.map(_.name)
 // res10: Seq[String] = Vector(

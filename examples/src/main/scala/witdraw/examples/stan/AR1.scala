@@ -67,7 +67,7 @@ object AR1:
     * `Latent` reads off its HalfCauchy prior.
     */
   def latent(y: Tensor1[Time, Float32]): Latent =
-    Latent.discover()(observed(y))
+    Latent.discover(observed(y))
 
   // -- Generative helpers -------------------------------------------------
 

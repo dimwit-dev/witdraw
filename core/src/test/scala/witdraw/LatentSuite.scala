@@ -10,7 +10,7 @@ class LatentSuite extends munit.FunSuite:
 
   override def beforeAll(): Unit = dimwit.initialize()
 
-  lazy val latent = Latent.discover(Constraint(Sigma, Bijector.exp)):
+  lazy val latent = Latent.discoverWithConstraints(Constraint(Sigma, Bijector.exp)):
     observe(Y := yData)(model)
 
   test("Latent finds the latent sites and starts from the traced values"):
@@ -56,7 +56,7 @@ class LatentSuite extends munit.FunSuite:
   test("Latent errors: unknown site, constraint on observed site"):
     intercept[NoSuchElementException](latent.init(Y))
     intercept[IllegalArgumentException]:
-      Latent.discover(Constraint(Y, Bijector.exp[Tuple1[Sample]])):
+      Latent.discoverWithConstraints(Constraint(Y, Bijector.exp[Tuple1[Sample]])):
         observe(Y := yData)(model)
 
   trait Comp derives Label
@@ -73,7 +73,7 @@ class LatentSuite extends munit.FunSuite:
       )
     )
 
-  final lazy val mixture = Latent.discover(
+  final lazy val mixture = Latent.discoverWithConstraints(
     Constraint(Weights, Bijector.simplexStickBreaking[CompZ, Comp]),
     Constraint(Locs, Bijector.ordered[Comp])
   )(mixturePrior)
@@ -101,7 +101,7 @@ class LatentSuite extends munit.FunSuite:
   test("initRandom works when the traced value lies outside its constraint"):
     // the traced value is about -10, which the exp constraint cannot reach
     object Neg extends Site[Tensor0[Float32]]
-    val constrained = Latent.discover(Constraint(Neg, Bijector.exp)):
+    val constrained = Latent.discoverWithConstraints(Constraint(Neg, Bijector.exp)):
       Neg ~ Normal(-10f, 0.1f)
     intercept[IllegalArgumentException](constrained.init)
     val start = constrained.initRandom(Key(3))
