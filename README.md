@@ -107,9 +107,9 @@ val posterior = Latent.discover(Constraint(Sigma, Bijector.exp)):
   observe(Y := yData)(model(xData))
 
 // warmup tunes the step size and the mass matrix
-val adapted = NUTS.adapt(posterior, posterior.init, Key(3))
-val draws = adapted.sampler.run(adapted.position, Key(4)).take(2000).map(_._1).toList
-draws.map(_(Sigma))   // posterior draws of sigma, each a Sigma.Value (> 0)
+val adapted = NUTS.adapt(posterior, Key(3), posterior.init)
+val chain = adapted.sample(Key(4), 2000)
+chain(Sigma)   // posterior draws of sigma, each a Sigma.Value (> 0)
 ```
 
 The [quickstart](docs/quickstart.md) is a complete, runnable version of this

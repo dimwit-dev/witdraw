@@ -18,7 +18,7 @@ trait LatentDim derives Label
   *   observe(Y := yData)(model(x))
   *
   * val nuts = NUTS[latent.Params](stepSize = 0.05)(latent.logDensity)
-  * val draws = nuts.run(latent.init, key).drop(500).take(2000).map(_._1).toList
+  * val draws = nuts.iterate(key, latent.init).drop(500).take(2000).map(_._1).toList
   * draws.map(_(Sigma))   // List[Sigma.Value], always positive
   * }}}
   *
@@ -34,6 +34,15 @@ final class Latent private (
 
   private val bySite: Map[SiteDef[?, ?], Slot[?]] =
     slots.map(s => s.site -> s).toMap
+
+  /** What inference algorithms keep for this latent, e.g. compiled
+    * functions, so that later calls, e.g. for further chains, reuse them.
+    */
+  private val caches = scala.collection.concurrent.TrieMap.empty[String, AnyRef]
+
+  /** The value kept under `key`, made by `make` on first use. */
+  private[witdraw] def cached(key: String)(make: => AnyRef): AnyRef =
+    caches.getOrElseUpdate(key, make)
 
   /** Values for the latent sites of the model: their unconstrained values, in
     * one vector.

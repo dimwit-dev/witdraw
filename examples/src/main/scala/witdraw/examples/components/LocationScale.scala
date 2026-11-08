@@ -144,13 +144,9 @@ object LocationScale:
 
     // The warmup tunes the step size and the mass matrix.
     val (warmupKey, sampleKey) = Key(1L).split2()
-    val adapted = NUTS.adapt(latent, start, warmupKey, numSteps = 500)
+    val adapted = NUTS.adapt(latent, warmupKey, start, numSteps = 500)
     println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
-    val (samples, infos) = adapted.sampler
-      .run(adapted.position, sampleKey)
-      .take(1000)
-      .toList
-      .unzip
+    val (samples, infos) = adapted.sample(sampleKey, 1000).draws.unzip
     println(f"NUTS divergences: ${infos.count(_.isDivergent)} / ${samples.length}")
 
     // ---- posterior ----------------------------------------------------

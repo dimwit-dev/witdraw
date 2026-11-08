@@ -29,7 +29,7 @@ object LaplaceState:
   * burn-in.
   * {{{
   * val laplace = Laplace(latent)
-  * val draws = laplace.sample(latent.init, key, 2000).map(_._1)
+  * val draws = laplace.sample(key, latent.init, 2000).positions
   * draws.map(_(Sigma))
   * }}}
   *
@@ -48,7 +48,7 @@ object Laplace:
       learningRate: Float = 0.05f
   ): SamplingAlgorithm[latent.Params, LaplaceState[latent.Params], Unit] =
     val atMode = apply[latent.Params](latent.logDensity)
-    atMode.copy(init = start =>
+    atMode.withInit(start =>
       atMode.init(
         maximise("Laplace", latent.logDensity, start, maxSteps, learningRate)
       )

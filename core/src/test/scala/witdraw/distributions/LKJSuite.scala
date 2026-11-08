@@ -45,12 +45,8 @@ class LKJSuite extends munit.FunSuite:
     )(Corr ~ lkj(eta, d))
     val (warmupKey, sampleKey) = Key(7).split2()
     val adapted =
-      inference.NUTS.adapt(latent, latent.init, warmupKey, numSteps = 500)
-    val (draws, infos) = adapted.sampler
-      .run(adapted.position, sampleKey)
-      .take(1000)
-      .toList
-      .unzip
+      inference.NUTS.adapt(latent, warmupKey, latent.init, numSteps = 500)
+    val (draws, infos) = adapted.sample(sampleKey, 1000).draws.unzip
     assertEquals(infos.count(_.isDivergent), 0)
     val a = eta - 1 + d / 2f
     trait Draw derives Label

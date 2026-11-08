@@ -5,7 +5,7 @@ import dimwit.*
 import dimwit.stats.*
 
 import witdraw.*
-import witdraw.inference.{Draws, NUTS}
+import witdraw.inference.NUTS
 import witdraw.plots.TracePlot.tracePlot
 
 import plotwit.PlotTargets.desktopBrowser
@@ -52,15 +52,13 @@ object WaterLandExample:
     // The warmup tunes the step size and the mass matrix.
     val (warmupKey, sampleKey) = Key(42).split2()
     val adapted =
-      NUTS.adapt(latent, latent.init, warmupKey, numSteps = numWarmup)
+      NUTS.adapt(latent, warmupKey, latent.init, numSteps = numWarmup)
 
     println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
-    val draws = Draws.single(
-      adapted.sampler.sample(adapted.position, sampleKey, nSamples)
-    )
+    val chain = adapted.sample(sampleKey, nSamples)
 
-    println(f"NUTS divergences: ${draws.numDivergent} / $nSamples")
-    val acceptance = draws.infos.flatten.map(_.acceptanceRate)
+    println(f"NUTS divergences: ${chain.numDivergent} / $nSamples")
+    val acceptance = chain.infos.map(_.acceptanceRate)
     println(
       f"NUTS mean acceptance rate: ${acceptance.sum / acceptance.size}%.3f"
     )
@@ -76,10 +74,10 @@ object WaterLandExample:
               predictiveSamples.map(_.waterCount.asFloat32),
               "predictive samples"
             ),
-            histogram(draws.all.map(p => p(WaterProp)), "posterior samples")
+            histogram(chain(WaterProp), "posterior samples")
           ),
           Seq(
-            tracePlot(draws)(WaterProp)
+            tracePlot(Seq(chain))(WaterProp)
           )
         )
       )

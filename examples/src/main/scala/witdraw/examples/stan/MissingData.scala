@@ -155,15 +155,11 @@ object MissingData:
     // matrix.
     val start = MAP(latent)
     val (warmupKey, sampleKey) = Key(2L).split2()
-    val adapted = NUTS.adapt(latent, start, warmupKey, numSteps = 500)
+    val adapted = NUTS.adapt(latent, warmupKey, start, numSteps = 500)
     println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
 
     trait Sample derives Label
-    val (samples, infos) = adapted.sampler
-      .run(adapted.position, sampleKey)
-      .take(1500)
-      .toList
-      .unzip
+    val (samples, infos) = adapted.sample(sampleKey, 1500).draws.unzip
 
     println(
       f"NUTS divergences: ${infos.count(_.isDivergent)} / ${samples.length}"

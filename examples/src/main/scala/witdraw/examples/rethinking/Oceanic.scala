@@ -124,13 +124,9 @@ object OceanicExample:
     // The warmup tunes the step size and the mass matrix.
     val (warmupKey, sampleKey) = Key(42).split2()
     val adapted =
-      NUTS.adapt(posterior, posterior.init, warmupKey, numSteps = numWarmup)
+      NUTS.adapt(posterior, warmupKey, posterior.init, numSteps = numWarmup)
     println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
-    val (nutsSamples, nutsInfos) = adapted.sampler
-      .run(adapted.position, sampleKey)
-      .take(nSamples)
-      .toList
-      .unzip
+    val (nutsSamples, nutsInfos) = adapted.sample(sampleKey, nSamples).draws.unzip
 
     trait Sample derives Label
     println(s"NUTS divergences: ${nutsInfos.count(_.isDivergent)} / $nSamples")

@@ -26,9 +26,9 @@ class LaplaceSuite extends munit.FunSuite:
     // starts away from the mode, which init finds itself
     val laplace = Laplace(latent)
     val start = latent.initWith(Mu := Tensor0(-2f))
-    val draws = laplace.sample(start, Key(7), 4000).map(_._1(Mu).item)
+    val draws = laplace.sample(Key(7), start, 4000).positions.map(_(Mu).item)
     // the compiled loop gives the draws of the step-by-step one
-    val looped = laplace.run(start, Key(7)).take(20).map(_._1(Mu).item).toList
+    val looped = laplace.iterate(Key(7), start).take(20).map(_._1(Mu).item).toList
     for (a, b) <- looped.zip(draws) do assertEqualsFloat(a, b, 1e-5f)
     val mean = draws.sum / draws.size
     val variance = draws.map(d => (d - mean) * (d - mean)).sum / draws.size

@@ -245,17 +245,14 @@ and the mass matrix, which rescales each direction of the parameter space and
 works best when it approximates the posterior covariance. `NUTS.adapt` runs a
 warmup that tunes both (Stan's window adaptation, run by BlackJax). The warmup
 also moves the chain away from its starting point, so no draws need to be
-discarded afterwards: we start the tuned sampler where the warmup ended.
+discarded afterwards: `adapted.sample` continues where the warmup ended, and
+returns the draws with the sampler's info for each.
 
 ```scala
 val (warmupKey, sampleKey) = nutsKey.split2()
-val adapted = NUTS.adapt(latent, latent.init, warmupKey, numSteps = 1000)
+val adapted = NUTS.adapt(latent, warmupKey, latent.init, numSteps = 1000)
 val nSamples = 2000
-val (samples, infos) = adapted.sampler
-  .run(adapted.position, sampleKey)
-  .take(nSamples)
-  .toList
-  .unzip
+val (samples, infos) = adapted.sample(sampleKey, nSamples).draws.unzip
 ```
 
 The tuned step size is `adapted.stepSize`. By default the mass matrix is
@@ -272,7 +269,7 @@ and standard deviation of each parameter with the true values:
 ```scala
 trait Draw derives Label
 
-def summary[T <: Tuple: Labels](draws: List[Tensor[T, Float32]]) =
+def summary[T <: Tuple: Labels](draws: Seq[Tensor[T, Float32]]) =
   val stacked = stack(draws, Axis[Draw])
   (stacked.mean(Axis[Draw]), stacked.std(Axis[Draw]))
 
@@ -283,9 +280,9 @@ val (sigmaMean, sigmaSd) = summary(samples.map(_(Sigma)))
 
 ```scala
 println(s"alpha: mean $alphaMean, sd $alphaSd   (true $alphaTrue)")
-// alpha: mean 0.40205646, sd 0.068933584   (true 0.5)
+// alpha: mean 0.40205646, sd 0.06893359   (true 0.5)
 println(s"beta:  mean $betaMean, sd $betaSd   (true $betaTrue)")
-// beta:  mean [-1.4118494  2.0433576], sd [0.07367019 0.07114119]   (true [-1.5  2. ])
+// beta:  mean [-1.4118494  2.0433574], sd [0.07367019 0.07114118]   (true [-1.5  2. ])
 println(s"sigma: mean $sigmaMean, sd $sigmaSd   (true $sigmaTrue)")
 // sigma: mean 0.68971026, sd 0.0504445   (true 0.8)
 ```
@@ -301,7 +298,7 @@ run has no divergent transitions and a reasonably high acceptance rate:
 val divergences = infos.count(_.isDivergent)
 // divergences: Int = 0
 val meanAcceptance = infos.map(_.acceptanceRate).sum / infos.size
-// meanAcceptance: Double = 0.8962475170716643
+// meanAcceptance: Double = 0.8962474684491754
 ```
 
 ### Running several chains
@@ -309,20 +306,36 @@ val meanAcceptance = infos.map(_.acceptanceRate).sum / infos.size
 One chain cannot tell us whether it has explored the whole posterior. The
 standard check is to run several chains from different starting points and
 compare them. `latent.initRandom` draws a starting point (uniformly between -2
-and 2 in unconstrained space, as Stan does), and `NUTS.adaptChains` tunes each
-chain on its own. All chains then run side by side, in one compiled loop:
+and 2 in unconstrained space, as Stan does). A chain is ordinary code: here a
+warmup that tunes NUTS for this chain alone, followed by sampling.
 
 ```scala
-val Seq(initKey, chainsWarmupKey, chainsSampleKey) = nutsKey.split(3)
-val starts = initKey.split(4).map(latent.initRandom(_))
-val adaptedChains = NUTS.adaptChains(latent, starts, chainsWarmupKey)
-val chainDraws = adaptedChains.sample(chainsSampleKey, 1000)
+def chain(key: Key, start: latent.Params) =
+  val (warmupKey, sampleKey) = key.split2()
+  val adapted = NUTS.adapt(latent, warmupKey, start)
+  adapted.sample(sampleKey, 1000)
 ```
 
-The result is a `Draws`: per chain, the positions and the sampler's info.
-`chainDraws(Beta)` gives the values of a site per chain, `chainDraws.all` the
-positions of all chains together, and `chainDraws.numDivergent` the number of
-divergent transitions.
+`sample` returns a `Chain`: its draws, with the sampler's info for each.
+`chain(Beta)` gives the values of a site, and `chain.numDivergent` the number
+of divergent transitions. To run the chains at the same time, we run each in a
+`Future`:
+
+```scala
+import scala.concurrent.{Await, Future, blocking}
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration.Duration
+
+val Seq(initKey, chainsKey) = nutsKey.split(2)
+val starts = initKey.split(4).map(latent.initRandom(_))
+val runs = chainsKey.split(4).zip(starts).map((key, start) => Future(blocking(chain(key, start))))
+val chains = Await.result(Future.sequence(runs), Duration.Inf)
+```
+
+A chain mostly waits for compiled code, and `blocking` lets each chain have a
+thread of its own. The warmup and the sampling loop are compiled for the first
+chain, and the others reuse them. A chain can run any algorithm, use other
+settings, or return more than its draws, e.g. its adapted step size.
 
 `Diagnostics.rhat` compares the chains: values close to 1 mean they agree, and
 values above about 1.01 are a warning. `Diagnostics.ess` estimates how many
@@ -330,14 +343,11 @@ independent draws the chains are worth. Both have the shape of the quantity,
 so `beta` gets one value per predictor:
 
 ```scala
-Diagnostics.rhat(chainDraws, Beta)
-// res7: Tensor[Tuple1[Feature], Float32] = [0.99991   0.9997617]
-Diagnostics.ess(chainDraws, Sigma)
-// res8: Tensor[EmptyTuple, Float32] = 3855.3652
+Diagnostics.rhat(chains, Beta)
+// res7: Tensor[Tuple1[Feature], Float32] = [0.99970824 1.0000974 ]
+Diagnostics.ess(chains, Sigma)
+// res8: Tensor[EmptyTuple, Float32] = 4066.4124
 ```
-
-For a sampler with fixed settings, `sampler.sampleChains(starts, key, numDraws)`
-does the same without the warmup.
 
 NUTS is not the only inference method: `MAP(latent)` finds the posterior mode,
 and `Laplace(latent)` approximates the posterior by a Gaussian around its mode
@@ -513,7 +523,7 @@ well as here:
 val lsLatent = Latent.discover():
   observe(outcome.Y := yData):
     outcome(xData)
-// lsLatent: Latent = witdraw.Latent@6e13308d
+// lsLatent: Latent = witdraw.Latent@6041cccd
 
 lsLatent.sites.map(_.name)
 // res10: Seq[String] = Vector(
