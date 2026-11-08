@@ -1,6 +1,5 @@
 package witdraw.plots
 
-import plotwit.PlotTargets.websocket
 import plotwit.*
 
 import viz.macros.VegaPlot
