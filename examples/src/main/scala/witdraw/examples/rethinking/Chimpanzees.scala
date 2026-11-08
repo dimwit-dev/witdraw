@@ -5,7 +5,6 @@ import dimwit.stats.Bernoulli
 import dimwit.stats.Exponential
 import dimwit.stats.Normal
 import dimwit.stats.Uniform
-import viz.PlotTargets.websocket
 import viz.macros.BoolField
 import witdraw.Constraint
 import witdraw.Latent
@@ -14,7 +13,7 @@ import witdraw.Site
 import witdraw.observe
 import witdraw.Bijector
 import witdraw.inference.NUTS
-import plotwit.PlotTargets.websocket
+import plotwit.PlotTargets.desktopBrowser
 import plotwit.{display, grid}
 
 import plotwit.plots.histogramPlot

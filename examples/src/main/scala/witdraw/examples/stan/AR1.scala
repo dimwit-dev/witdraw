@@ -4,7 +4,7 @@ import dimwit.*
 import dimwit.stats.*
 import witdraw.*
 import plotwit.*
-import plotwit.PlotTargets.websocket
+import plotwit.PlotTargets.desktopBrowser
 import io.circe.Json
 
 object AR1:
@@ -95,7 +95,7 @@ object AR1:
     *     (the Stan model likewise conditions on `y[1]`), which then relaxes
     *     back toward it.
     *
-    * Needs a plotwit websocket viewer listening on the default port.
+    * Opens the plots in the desktop browser.
     */
   @main
   def ar1Simulations(): Unit =
