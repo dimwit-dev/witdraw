@@ -63,7 +63,7 @@ object Benchmark:
     /** Samples `latent` from `start` and writes the draws and timings. */
     def bench(latent: Latent, setupStart: Long)(
         start: latent.Params,
-        columns: Seq[(String, latent.Params => Float)]
+        columns: Seq[(String, latent.Result => Float)]
     ): Unit =
       val tSetup = System.nanoTime()
       type Sampler = SamplingAlgorithm[latent.Params, NUTSState[latent.Params], NUTSInfo]
@@ -89,7 +89,9 @@ object Benchmark:
 
       // quoted, since names like gamma[1,2] contain commas
       val header = columns.map((name, _) => s"\"$name\"").mkString(",")
-      val rows = kept.map((p, _) => columns.map((_, f) => f(p).toString).mkString(","))
+      val rows = kept.map: (p, _) =>
+        val r = latent.result(p)
+        columns.map((_, f) => f(r).toString).mkString(",")
       os.write.over(
         out / s"witdraw_${model}_draws.csv",
         (header +: rows).mkString("", "\n", "\n")
@@ -128,9 +130,9 @@ object Benchmark:
         val l = latent(x, y)
         bench(l, t0)(
           l.init,
-          Seq("alpha" -> ((p: l.Params) => p(Alpha).item)) ++
-            vector[l.Params]("beta", data("K").num.toInt)(_(Beta).toArray) :+
-            ("sigma" -> ((p: l.Params) => p(Sigma).item))
+          Seq("alpha" -> ((r: l.Result) => r.alpha.item)) ++
+            vector[l.Result]("beta", data("K").num.toInt)(_.beta.toArray) :+
+            ("sigma" -> ((r: l.Result) => r.sigma.item))
         )
 
       case "mixture" =>
@@ -142,9 +144,9 @@ object Benchmark:
         val muStart = Array.tabulate(k)(i => i.toFloat - (k - 1) / 2f)
         bench(l, t0)(
           l.initWith(Mu := Tensor1(Axis[Comp] -> k).fromArray(muStart)),
-          vector[l.Params]("theta", k)(_(Theta).toArray) ++
-            vector[l.Params]("mu", k)(_(Mu).toArray) ++
-            vector[l.Params]("sigma", k)(_(Sigma).toArray)
+          vector[l.Result]("theta", k)(_.theta.toArray) ++
+            vector[l.Result]("mu", k)(_.mu.toArray) ++
+            vector[l.Result]("sigma", k)(_.sigma.toArray)
         )
 
       case "hmm" =>
@@ -154,12 +156,12 @@ object Benchmark:
         val gamma =
           for i <- 0 until 3; j <- 0 until 3
           yield s"gamma[${i + 1},${j + 1}]" ->
-            ((p: l.Params) => p(Gamma).toArray(i)(j))
+            ((r: l.Result) => r.gamma.toArray(i)(j))
         bench(l, t0)(
           l.init,
-          vector[l.Params]("mu", 3)(_(Mu).toArray) ++
-            Seq("sigma" -> ((p: l.Params) => p(Sigma).item)) ++
-            vector[l.Params]("rho", 3)(_(Rho).toArray) ++
+          vector[l.Result]("mu", 3)(_.mu.toArray) ++
+            Seq("sigma" -> ((r: l.Result) => r.sigma.item)) ++
+            vector[l.Result]("rho", 3)(_.rho.toArray) ++
             gamma
         )
 

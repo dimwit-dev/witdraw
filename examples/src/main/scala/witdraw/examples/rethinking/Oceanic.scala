@@ -126,28 +126,36 @@ object OceanicExample:
     val adapted =
       NUTS.adapt(posterior, warmupKey, posterior.init, numSteps = numWarmup)
     println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
-    val (nutsSamples, nutsInfos) = adapted.sample(sampleKey, nSamples).draws.unzip
+    val chain = adapted.sample(sampleKey, nSamples)
+    // the model's result at each draw
+    val samples = chain.samples
 
     trait Sample derives Label
-    println(s"NUTS divergences: ${nutsInfos.count(_.isDivergent)} / $nSamples")
-    for site <- List(GlobalIntercept, SocietySlope, Eta2, Rho2) do
-      val draws = stack(nutsSamples.map(_(site)), Axis[Sample])
+    println(s"NUTS divergences: ${chain.numDivergent} / $nSamples")
+    for (name, values) <- List(
+        "globalIntercept" -> samples.map(_.globalIntercept),
+        "societySlope" -> samples.map(_.societySlope),
+        "eta2" -> samples.map(_.eta2),
+        "rho2" -> samples.map(_.rho2)
+      )
+    do
+      val draws = stack(values, Axis[Sample])
       println(
-        f"${site.name}%-16s mean ${draws.mean.item}%7.3f  sd ${draws.std.item}%6.3f"
+        f"$name%-16s mean ${draws.mean.item}%7.3f  sd ${draws.std.item}%6.3f"
       )
     val p1 = histogramPlot(
-      stack(nutsSamples.map(_(GlobalIntercept)), Axis[Sample]),
+      stack(samples.map(_.globalIntercept), Axis[Sample]),
       _.title := "Posterior of globalIntercept"
     )
 
     val p2 = histogramPlot(
-      stack(nutsSamples.map(_(SocietySlope)), Axis[Sample]),
+      stack(samples.map(_.societySlope), Axis[Sample]),
       _.title := "Posterior of societySlope"
     )
 
     val p3 = histogramPlot(
       stack(
-        nutsSamples.map(_(SocietyIntercept).select(Axis[Society].at(0))),
+        samples.map(_.societyIntercept.select(Axis[Society].at(0))),
         Axis[Sample]
       ),
       _.title := "Posterior of societyIntercept 0"
@@ -155,7 +163,7 @@ object OceanicExample:
 
     val p4 = histogramPlot(
       stack(
-        nutsSamples.map(_(SocietyIntercept).select(Axis[Society].at(1))),
+        samples.map(_.societyIntercept.select(Axis[Society].at(1))),
         Axis[Sample]
       ),
       _.title := "Posterior of societyIntercept 1"

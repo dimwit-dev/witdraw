@@ -29,8 +29,8 @@ object LaplaceState:
   * burn-in.
   * {{{
   * val laplace = Laplace(latent)
-  * val draws = laplace.sample(key, latent.init, 2000).positions
-  * draws.map(_(Sigma))
+  * val samples = laplace.sample(key, latent.init, 2000).samples
+  * samples.map(_.sigma)
   * }}}
   *
   * `init` does the expensive part: it finds the mode, and computes and inverts

@@ -213,11 +213,13 @@ latent.sites.map(_.name)
 // res3: Seq[String] = Vector("Alpha", "Beta", "Sigma")
 ```
 
-`latent.Params` is a parameter type made for this model: it holds one value
-per latent site, and `params(Sigma)` reads the value of a site, typed by the
-site (here a `Sigma.Value`). `latent.logDensity` is the log-density as a
-function of `latent.Params`, and `latent.init` is a starting point for
-inference: the values of the traced run.
+A latent has two types made for this model. `latent.Params` is where
+inference moves: one unconstrained value per latent site, in one vector.
+`latent.Result` is what we read: the model's own result, the same named tuple
+as the prior predictive draws above, and `latent.result(params)` gives it at
+given parameters. `latent.logDensity` is the log-density as a function of
+`latent.Params`, and `latent.init` is a starting point for inference: the
+values of the traced run.
 
 Handlers nest like any other block, and each one sees every random variable
 that is sampled inside its block. To compute `logDensity`, `Latent` wraps the
@@ -238,7 +240,7 @@ Positive distributions such as `HalfCauchy` get a bijector like this by
 default; `transform` chooses one explicitly, or another one. The sampler
 then moves in unconstrained space, and `latent.logDensity` includes the
 Jacobian correction for the change of variables. We never see $z$ ourselves:
-`params(Sigma)` always gives $\sigma = e^z$.
+`latent.result(params).sigma` always gives $\sigma = e^z$.
 
 ### Running NUTS
 
@@ -249,13 +251,15 @@ works best when it approximates the posterior covariance. `NUTS.adapt` runs a
 warmup that tunes both (Stan's window adaptation, run by BlackJax). The warmup
 also moves the chain away from its starting point, so no draws need to be
 discarded afterwards: `adapted.sample` continues where the warmup ended, and
-returns the draws with the sampler's info for each.
+returns a chain of draws; `samples` gives the model's result at each, the same
+named tuple as the prior predictive draws above.
 
 ```scala
 val (warmupKey, sampleKey) = nutsKey.split2()
 val adapted = NUTS.adapt(latent, warmupKey, latent.init, numSteps = 1000)
 val nSamples = 2000
-val (samples, infos) = adapted.sample(sampleKey, nSamples).draws.unzip
+val nutsChain = adapted.sample(sampleKey, nSamples)
+val samples = nutsChain.samples
 ```
 
 The tuned step size is `adapted.stepSize`. By default the mass matrix is
@@ -276,18 +280,18 @@ def summary[T <: Tuple: Labels](draws: Seq[Tensor[T, Float32]]) =
   val stacked = stack(draws, Axis[Draw])
   (stacked.mean(Axis[Draw]), stacked.std(Axis[Draw]))
 
-val (alphaMean, alphaSd) = summary(samples.map(_(Alpha)))
-val (betaMean, betaSd) = summary(samples.map(_(Beta)))
-val (sigmaMean, sigmaSd) = summary(samples.map(_(Sigma)))
+val (alphaMean, alphaSd) = summary(samples.map(_.alpha))
+val (betaMean, betaSd) = summary(samples.map(_.beta))
+val (sigmaMean, sigmaSd) = summary(samples.map(_.sigma))
 ```
 
 ```scala
 println(s"alpha: mean $alphaMean, sd $alphaSd   (true $alphaTrue)")
-// alpha: mean 0.40205646, sd 0.06893359   (true 0.5)
+// alpha: mean 0.40361282, sd 0.069461726   (true 0.5)
 println(s"beta:  mean $betaMean, sd $betaSd   (true $betaTrue)")
-// beta:  mean [-1.4118494  2.0433574], sd [0.07367019 0.07114118]   (true [-1.5  2. ])
+// beta:  mean [-1.412222  2.04343 ], sd [0.07319704 0.07117827]   (true [-1.5  2. ])
 println(s"sigma: mean $sigmaMean, sd $sigmaSd   (true $sigmaTrue)")
-// sigma: mean 0.68971026, sd 0.0504445   (true 0.8)
+// sigma: mean 0.6899296, sd 0.05095555   (true 0.8)
 ```
 
 The true values lie within roughly two posterior standard deviations of the
@@ -298,10 +302,10 @@ Each draw also comes with diagnostic information from the sampler. A healthy
 run has no divergent transitions and a reasonably high acceptance rate:
 
 ```scala
-val divergences = infos.count(_.isDivergent)
+val divergences = nutsChain.numDivergent
 // divergences: Int = 0
-val meanAcceptance = infos.map(_.acceptanceRate).sum / infos.size
-// meanAcceptance: Double = 0.8962474684491754
+val meanAcceptance = nutsChain.infos.map(_.acceptanceRate).sum / nutsChain.size
+// meanAcceptance: Double = 0.9308549618422985
 ```
 
 ### Running several chains
@@ -320,8 +324,8 @@ def chain(key: Key, start: latent.Params) =
 ```
 
 `sample` returns a `Chain`: its draws, with the sampler's info for each.
-`chain(Beta)` gives the values of a site, and `chain.numDivergent` the number
-of divergent transitions. To run the chains at the same time, we run each in a
+`chain.samples` gives the model's result at each draw, and
+`chain.numDivergent` the number of divergent transitions. To run the chains at the same time, we run each in a
 `Future`:
 
 ```scala
@@ -342,14 +346,65 @@ settings, or return more than its draws, e.g. its adapted step size.
 
 `Diagnostics.rhat` compares the chains: values close to 1 mean they agree, and
 values above about 1.01 are a warning. `Diagnostics.ess` estimates how many
-independent draws the chains are worth. Both have the shape of the quantity,
-so `beta` gets one value per predictor:
+independent draws the chains are worth. Both take the draws of one quantity,
+per chain, and have its shape, so `beta` gets one value per predictor:
 
 ```scala
-Diagnostics.rhat(chains, Beta)
-// res7: Tensor[Tuple1[Feature], Float32] = [0.99970824 1.0000974 ]
-Diagnostics.ess(chains, Sigma)
-// res8: Tensor[EmptyTuple, Float32] = 4066.4124
+val chainSamples = chains.map(_.samples)
+// chainSamples: Seq[Seq[NamedTuple[Tuple4["alpha", "beta", "sigma", "y"], Tuple4[Tensor[EmptyTuple, Float32], Tensor[Tuple1[Feature], Float32], Tensor[EmptyTuple, Float32], Tensor[Tuple1[Sample], Float32]]]]] = Vector(
+//   List(
+//     (
+//       0.36428267,
+//       [-1.4184844  2.0454156],
+//       0.72128636,
+//       [-0.10196236  0.2429781  -0.05705082 -2.4873717   3.7834146  -0.4873079
+//  -1.9699229  -1.8418556   1.2729169   3.7633083   4.183006    3.387136
+//   2.9561925  -0.62688136 -4.299474   -0.25279456 -0.8641423   3.6897504
+//  -0.2727195   2.7278574  -2.4174492   5.498894   -0.34408772  0.33337837
+//   0.7967427   4.4882426   5.1004615   1.6002898   1.3427472  -1.447418
+//   1.5399214  -2.2170792  -2.14231     5.986033    4.02204    -1.9723366
+//  -1.5114689  -1.2178509  -0.759506   -0.05417639  6.4333787   3.2024684
+//   0.0425368   3.8634524  -1.4387481  -3.3665395   0.03691113  0.46876243
+//   4.0792418   1.9930805   2.0883217   1.9663954  -1.1308525  -2.3779635
+//   2.5628986  -2.0016458  -0.8894644  -1.4009279   1.2943025  -1.9712675
+//  -1.7932141   2.2704911  -1.9712567   0.6256285  -2.7002976  -4.2193174
+//  -5.6854215  -2.1527383   3.252094    0.551646    0.18111685  3.3525226
+//  -2.0822215  -3.8152156  -0.26669765  0.40129253  3.6129751   5.231741
+//  -0.8901636   2.5462198  -2.3932333  -2.3989074  -0.94802153  3.0354598
+//   2.3858023  -0.73757464  0.09980711  2.6494377   5.2678933  -1.1561251
+//   0.56709236  2.849967    0.48100537 -0.5164595   3.6530075   1.91774
+//  -1.0295032  -0.8064156   2.4187832   0.6456901 ]
+//     ),
+//     (
+//       0.37039635,
+//       [-1.4348248  2.1133378],
+//       0.69500756,
+//       [-0.10196236  0.2429781  -0.05705082 -2.4873717   3.7834146  -0.4873079
+//  -1.9699229  -1.8418556   1.2729169   3.7633083   4.183006    3.387136
+//   2.9561925  -0.62688136 -4.299474   -0.25279456 -0.8641423   3.6897504
+//  -0.2727195   2.7278574  -2.4174492   5.498894   -0.34408772  0.33337837
+//   0.7967427   4.4882426   5.1004615   1.6002898   1.3427472  -1.447418
+//   1.5399214  -2.2170792  -2.14231     5.986033    4.02204    -1.9723366
+//  -1.5114689  -1.2178509  -0.759506   -0.05417639  6.4333787   3.2024684
+//   0.0425368   3.8634524  -1.4387481  -3.3665395   0.03691113  0.46876243
+//   4.0792418   1.9930805   2.0883217   1.9663954  -1.1308525  -2.3779635
+//   2.5628986  -2.0016458  -0.8894644  -1.4009279   1.2943025  -1.9712675
+//  -1.7932141   2.2704911  -1.9712567   0.6256285  -2.7002976  -4.2193174
+//  -5.6854215  -2.1527383   3.252094    0.551646    0.18111685  3.3525226
+//  -2.0822215  -3.8152156  -0.26669765  0.40129253  3.6129751   5.231741
+//  -0.8901636   2.5462198  -2.3932333  -2.3989074  -0.94802153  3.0354598
+//   2.3858023  -0.73757464  0.09980711  2.6494377   5.2678933  -1.1561251
+//   0.56709236  2.849967    0.48100537 -0.5164595   3.6530075   1.91774
+//  -1.0295032  -0.8064156   2.4187832   0.6456901 ]
+//     ),
+//     (
+//       0.36322737,
+//       [-1.3989373  2.1478271],
+// ...
+Diagnostics.rhat(chainSamples.map(_.map(_.beta)))
+// res7: Tensor[Tuple1[Feature], Float32] = [0.9999283 0.9999028]
+Diagnostics.ess(chainSamples.map(_.map(_.sigma)))
+// res8: Tensor[EmptyTuple, Float32] = 4152.4
 ```
 
 NUTS is not the only inference method: `MAP(latent)` finds the posterior mode,
@@ -487,16 +542,17 @@ trait Linear(priorScale: Float) extends Component:
       Tensor1(x.extent(Axis[Feature])).fill(0f),
       priorScale
     )
-    x.dot(Axis[Feature])(weights) +! intercept
-
-  def values(v: SiteValues) = Linear.Values(v(Intercept), v(Weights))
+    (
+      output = x.dot(Axis[Feature])(weights) +! intercept,
+      values = Linear.Values(intercept, weights)
+    )
 
 object Linear:
   case class Values(intercept: Tensor0[Float32], weights: Tensor1[Feature, Float32])
 ```
 
-The method `values` and its record `Linear.Values` are optional; we come
-back to them below.
+`apply` returns the linear predictor and a typed record of the component's
+values, `Linear.Values`; we come back to the record below.
 
 A component can contain other components. The location-scale regression
 has two instances of `Linear`, and its own outcome site:
@@ -508,9 +564,10 @@ trait LocationScale extends Component:
   object Y extends Site[Tensor1[Sample, Float32]]
 
   def apply(x: Tensor2[Sample, Feature, Float32])(using ProbContext) =
-    Y ~ Normal(mean(x), logScale(x).exp)
-
-  def values(v: SiteValues) = LocationScale.Values(mean.values(v), logScale.values(v))
+    val m = mean(x)
+    val s = logScale(x)
+    val y = Y ~ Normal(m.output, s.output.exp)
+    (y = y, values = LocationScale.Values(m.values, s.values))
 
 object LocationScale:
   case class Values(mean: Linear.Values, logScale: Linear.Values)
@@ -526,7 +583,9 @@ well as here:
 val lsLatent = Latent.discover:
   observe(outcome.Y := yData):
     outcome(xData)
-// lsLatent: Latent = witdraw.Latent@79692097
+// lsLatent: Latent {
+  type Result >: NamedTuple[Tuple2["y", "values"], Tuple2[Tensor[Tuple1[Sample], Float32], Values]] <: NamedTuple[Tuple2["y", "values"], Tuple2[Tensor[Tuple1[Sample], Float32], Values]]
+} = witdraw.Latent$$anon$4@14ae8947
 
 lsLatent.sites.map(_.name)
 // res10: Seq[String] = Vector(
@@ -542,16 +601,15 @@ parameters can take any real value.
 
 ### Values as a typed record
 
-`params(outcome.mean.Weights)` reads one value, but with many sites it helps
-to read all values of a component at once, as a typed record. This is what
-the `values` methods above do, and the records nest like the components do:
-`LocationScale.Values` holds one `Linear.Values` for the mean and one for
-the log-scale.
+With many sites it helps to read all values of a component at once, as a
+typed record. Each component above returns its record, and the records nest
+like the components do: `LocationScale.Values` holds one `Linear.Values` for
+the mean and one for the log-scale.
 
-A `SiteValues` gives the value of any site. Both a `Trace` from `withTrace`
-and `lsLatent.values(params)` are one, so the same method reads a record
-from a run of the model and from a point of the posterior. Here we find the
-posterior mode with `MAP` and read it as a record. We start the search at 0,
+The record is part of the model's result, so it comes with every forward run,
+with `lsLatent.result(params)` at a point of the posterior, and with every
+sample of a chain. Here we find the posterior mode with `MAP` and read its
+record. We start the search at 0,
 i.e. mean 0 and scale 1 for every sample, rather than at the traced values,
 a draw from the prior whose scales can be extreme:
 
@@ -568,20 +626,20 @@ val start = Seq(
 ```
 
 ```scala
-val mode = outcome.values(lsLatent.values(MAP(lsLatent, start)))
+val mode = lsLatent.result(MAP(lsLatent, start)).values
 // mode: Values = Values(
-//   mean = Values(intercept = 0.40074044, weights = [-1.4111494  2.0541947]),
+//   mean = Values(intercept = 0.40074044, weights = [-1.4111495  2.0541945]),
 //   logScale = Values(
 //     intercept = -0.40187716,
-//     weights = [ 0.08556081 -0.02117608]
+//     weights = [ 0.0855608  -0.02117608]
 //   )
 // )
 mode.mean.weights
-// res11: Tensor[Tuple1[Feature], Float32] = [-1.4111494  2.0541947]
+// res11: Tensor[Tuple1[Feature], Float32] = [-1.4111495  2.0541945]
 mode.logScale.weights
-// res12: Tensor[Tuple1[Feature], Float32] = [ 0.08556081 -0.02117608]
+// res12: Tensor[Tuple1[Feature], Float32] = [ 0.0855608  -0.02117608]
 mode.logScale.intercept.exp
-// res13: Tensor[EmptyTuple, Float32] = 0.6690629
+// res13: Tensor[EmptyTuple, Float32] = 0.669063
 ```
 
 The weights of the mean are close to `betaTrue`. The data was simulated

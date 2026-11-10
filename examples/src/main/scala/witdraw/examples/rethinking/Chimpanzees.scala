@@ -136,46 +136,48 @@ object Chimpanzees:
     val adapted =
       NUTS.adapt(posterior, warmupKey, posterior.init, numSteps = numWarmup)
     println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
-    val (nutsSamples, nutsInfos) = adapted.sample(sampleKey, nSamples).draws.unzip
-    println(s"NUTS divergences: ${nutsInfos.count(_.isDivergent)} / $nSamples")
-    for site <- List(
-        PopulationIntercept,
-        ProsocialEffect,
-        PartnerEffect,
-        ChimpVariability
+    val chain = adapted.sample(sampleKey, nSamples)
+    println(s"NUTS divergences: ${chain.numDivergent} / $nSamples")
+    // the model's result at each draw
+    val samples = chain.samples
+    for (name, values) <- List(
+        "populationIntercept" -> samples.map(_.populationIntercept),
+        "prosocialEffect" -> samples.map(_.prosocialEffect),
+        "partnerEffect" -> samples.map(_.partnerEffect),
+        "chimpVariability" -> samples.map(_.chimpVariability)
       )
     do
-      val draws = stack(nutsSamples.map(_(site)), Axis[Trial])
+      val draws = stack(values, Axis[Trial])
       println(
-        f"${site.name}%-20s mean ${draws.mean.item}%7.3f  sd ${draws.std.item}%6.3f"
+        f"$name%-20s mean ${draws.mean.item}%7.3f  sd ${draws.std.item}%6.3f"
       )
 
     // val pChimpIntercept =
     //   Plotting.plotHistogram(
-    //     stack(nutsSamples.map(_.chimpIntercept), Axis[Trial]),
+    //     stack(samples.map(_.chimpIntercept), Axis[Trial]),
     //     title = Some("Posterior of chimpIntercept")
     //   )
     val pProsocialEffect =
       histogramPlot(
-        stack(nutsSamples.map(_(ProsocialEffect)), Axis[Trial]),
+        stack(samples.map(_.prosocialEffect), Axis[Trial]),
         _.title := "Posterior of prosocialEffect"
       )
     val pPartnerEffect =
       histogramPlot(
-        stack(nutsSamples.map(_(PartnerEffect)), Axis[Trial]),
+        stack(samples.map(_.partnerEffect), Axis[Trial]),
         _.title := "Posterior of partnerEffect"
       )
 
     val chimp0Plot = histogramPlot(
       stack(
-        nutsSamples.map(_(ChimpIntercept).select(Axis[Chimp].at(0))),
+        samples.map(_.chimpIntercept.select(Axis[Chimp].at(0))),
         Axis[Trial]
       ),
       _.title := "Posterior of chimpIntercept[0]"
     )
     val chimp1Plot = histogramPlot(
       stack(
-        nutsSamples.map(_(ChimpIntercept).select(Axis[Chimp].at(1))),
+        samples.map(_.chimpIntercept.select(Axis[Chimp].at(1))),
         Axis[Trial]
       ),
       _.title := "Posterior of chimpIntercept[1]"

@@ -21,14 +21,15 @@ class LaplaceSuite extends munit.FunSuite:
     val yData = Tensor1(Axis[Sample]).fromArray(Array(0.5f, -1f, 2f))
     def model(using ProbContext) =
       val mu = Mu ~ Normal(0f, 1f)
-      Y ~ Normal.isotropic(Tensor1(Axis[Sample] -> 3).fill(0f) +! mu, 1f)
+      val y = Y ~ Normal.isotropic(Tensor1(Axis[Sample] -> 3).fill(0f) +! mu, 1f)
+      (mu = mu, y = y)
     val latent = Latent.discover(observe(Y := yData)(model))
     // starts away from the mode, which init finds itself
     val laplace = Laplace(latent)
     val start = latent.initWith(Mu := Tensor0(-2f))
-    val draws = laplace.sample(Key(7), start, 4000).positions.map(_(Mu).item)
+    val draws = laplace.sample(Key(7), start, 4000).samples.map(_.mu.item)
     // the compiled loop gives the draws of the step-by-step one
-    val looped = laplace.iterate(Key(7), start).take(20).map(_._1(Mu).item).toList
+    val looped = laplace.iterate(Key(7), start).take(20).map(d => latent.result(d._1).mu.item).toList
     for (a, b) <- looped.zip(draws) do assertEqualsFloat(a, b, 1e-5f)
     val mean = draws.sum / draws.size
     val variance = draws.map(d => (d - mean) * (d - mean)).sum / draws.size

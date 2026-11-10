@@ -39,7 +39,7 @@ class InverseSuite extends munit.FunSuite:
   test("an Inverse site is sampled on the log scale"):
     val latent = Latent.discover(Sigma2 ~ Inverse(Gamma(Tensor0(2f), Tensor0(1f))))
     val p = latent.initWith(Sigma2 := Tensor0(1.5f))
-    assertEqualsFloat(p(Sigma2).item, 1.5f, 1e-5f)
+    assertEqualsFloat(latent.result(p).item, 1.5f, 1e-5f)
     assertEqualsFloat(
       (latent.logDensity(p) - latent.modelLogDensity(p)).item,
       math.log(1.5).toFloat,

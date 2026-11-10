@@ -202,11 +202,13 @@ val latent = Latent.discover:
 latent.sites.map(_.name)
 ```
 
-`latent.Params` is a parameter type made for this model: it holds one value
-per latent site, and `params(Sigma)` reads the value of a site, typed by the
-site (here a `Sigma.Value`). `latent.logDensity` is the log-density as a
-function of `latent.Params`, and `latent.init` is a starting point for
-inference: the values of the traced run.
+A latent has two types made for this model. `latent.Params` is where
+inference moves: one unconstrained value per latent site, in one vector.
+`latent.Result` is what we read: the model's own result, the same named tuple
+as the prior predictive draws above, and `latent.result(params)` gives it at
+given parameters. `latent.logDensity` is the log-density as a function of
+`latent.Params`, and `latent.init` is a starting point for inference: the
+values of the traced run.
 
 Handlers nest like any other block, and each one sees every random variable
 that is sampled inside its block. To compute `logDensity`, `Latent` wraps the
@@ -227,7 +229,7 @@ Positive distributions such as `HalfCauchy` get a bijector like this by
 default; `transform` chooses one explicitly, or another one. The sampler
 then moves in unconstrained space, and `latent.logDensity` includes the
 Jacobian correction for the change of variables. We never see $z$ ourselves:
-`params(Sigma)` always gives $\sigma = e^z$.
+`latent.result(params).sigma` always gives $\sigma = e^z$.
 
 ### Running NUTS
 
@@ -238,13 +240,15 @@ works best when it approximates the posterior covariance. `NUTS.adapt` runs a
 warmup that tunes both (Stan's window adaptation, run by BlackJax). The warmup
 also moves the chain away from its starting point, so no draws need to be
 discarded afterwards: `adapted.sample` continues where the warmup ended, and
-returns the draws with the sampler's info for each.
+returns a chain of draws; `samples` gives the model's result at each, the same
+named tuple as the prior predictive draws above.
 
 ```scala mdoc:silent
 val (warmupKey, sampleKey) = nutsKey.split2()
 val adapted = NUTS.adapt(latent, warmupKey, latent.init, numSteps = 1000)
 val nSamples = 2000
-val (samples, infos) = adapted.sample(sampleKey, nSamples).draws.unzip
+val nutsChain = adapted.sample(sampleKey, nSamples)
+val samples = nutsChain.samples
 ```
 
 The tuned step size is `adapted.stepSize`. By default the mass matrix is
@@ -265,9 +269,9 @@ def summary[T <: Tuple: Labels](draws: Seq[Tensor[T, Float32]]) =
   val stacked = stack(draws, Axis[Draw])
   (stacked.mean(Axis[Draw]), stacked.std(Axis[Draw]))
 
-val (alphaMean, alphaSd) = summary(samples.map(_(Alpha)))
-val (betaMean, betaSd) = summary(samples.map(_(Beta)))
-val (sigmaMean, sigmaSd) = summary(samples.map(_(Sigma)))
+val (alphaMean, alphaSd) = summary(samples.map(_.alpha))
+val (betaMean, betaSd) = summary(samples.map(_.beta))
+val (sigmaMean, sigmaSd) = summary(samples.map(_.sigma))
 ```
 
 ```scala mdoc
@@ -284,8 +288,8 @@ Each draw also comes with diagnostic information from the sampler. A healthy
 run has no divergent transitions and a reasonably high acceptance rate:
 
 ```scala mdoc
-val divergences = infos.count(_.isDivergent)
-val meanAcceptance = infos.map(_.acceptanceRate).sum / infos.size
+val divergences = nutsChain.numDivergent
+val meanAcceptance = nutsChain.infos.map(_.acceptanceRate).sum / nutsChain.size
 ```
 
 ### Running several chains
@@ -304,8 +308,8 @@ def chain(key: Key, start: latent.Params) =
 ```
 
 `sample` returns a `Chain`: its draws, with the sampler's info for each.
-`chain(Beta)` gives the values of a site, and `chain.numDivergent` the number
-of divergent transitions. To run the chains at the same time, we run each in a
+`chain.samples` gives the model's result at each draw, and
+`chain.numDivergent` the number of divergent transitions. To run the chains at the same time, we run each in a
 `Future`:
 
 ```scala mdoc:silent
@@ -326,12 +330,13 @@ settings, or return more than its draws, e.g. its adapted step size.
 
 `Diagnostics.rhat` compares the chains: values close to 1 mean they agree, and
 values above about 1.01 are a warning. `Diagnostics.ess` estimates how many
-independent draws the chains are worth. Both have the shape of the quantity,
-so `beta` gets one value per predictor:
+independent draws the chains are worth. Both take the draws of one quantity,
+per chain, and have its shape, so `beta` gets one value per predictor:
 
 ```scala mdoc
-Diagnostics.rhat(chains, Beta)
-Diagnostics.ess(chains, Sigma)
+val chainSamples = chains.map(_.samples)
+Diagnostics.rhat(chainSamples.map(_.map(_.beta)))
+Diagnostics.ess(chainSamples.map(_.map(_.sigma)))
 ```
 
 NUTS is not the only inference method: `MAP(latent)` finds the posterior mode,
@@ -467,16 +472,17 @@ trait Linear(priorScale: Float) extends Component:
       Tensor1(x.extent(Axis[Feature])).fill(0f),
       priorScale
     )
-    x.dot(Axis[Feature])(weights) +! intercept
-
-  def values(v: SiteValues) = Linear.Values(v(Intercept), v(Weights))
+    (
+      output = x.dot(Axis[Feature])(weights) +! intercept,
+      values = Linear.Values(intercept, weights)
+    )
 
 object Linear:
   case class Values(intercept: Tensor0[Float32], weights: Tensor1[Feature, Float32])
 ```
 
-The method `values` and its record `Linear.Values` are optional; we come
-back to them below.
+`apply` returns the linear predictor and a typed record of the component's
+values, `Linear.Values`; we come back to the record below.
 
 A component can contain other components. The location-scale regression
 has two instances of `Linear`, and its own outcome site:
@@ -488,9 +494,10 @@ trait LocationScale extends Component:
   object Y extends Site[Tensor1[Sample, Float32]]
 
   def apply(x: Tensor2[Sample, Feature, Float32])(using ProbContext) =
-    Y ~ Normal(mean(x), logScale(x).exp)
-
-  def values(v: SiteValues) = LocationScale.Values(mean.values(v), logScale.values(v))
+    val m = mean(x)
+    val s = logScale(x)
+    val y = Y ~ Normal(m.output, s.output.exp)
+    (y = y, values = LocationScale.Values(m.values, s.values))
 
 object LocationScale:
   case class Values(mean: Linear.Values, logScale: Linear.Values)
@@ -515,16 +522,15 @@ parameters can take any real value.
 
 ### Values as a typed record
 
-`params(outcome.mean.Weights)` reads one value, but with many sites it helps
-to read all values of a component at once, as a typed record. This is what
-the `values` methods above do, and the records nest like the components do:
-`LocationScale.Values` holds one `Linear.Values` for the mean and one for
-the log-scale.
+With many sites it helps to read all values of a component at once, as a
+typed record. Each component above returns its record, and the records nest
+like the components do: `LocationScale.Values` holds one `Linear.Values` for
+the mean and one for the log-scale.
 
-A `SiteValues` gives the value of any site. Both a `Trace` from `withTrace`
-and `lsLatent.values(params)` are one, so the same method reads a record
-from a run of the model and from a point of the posterior. Here we find the
-posterior mode with `MAP` and read it as a record. We start the search at 0,
+The record is part of the model's result, so it comes with every forward run,
+with `lsLatent.result(params)` at a point of the posterior, and with every
+sample of a chain. Here we find the posterior mode with `MAP` and read its
+record. We start the search at 0,
 i.e. mean 0 and scale 1 for every sample, rather than at the traced values,
 a draw from the prior whose scales can be extreme:
 
@@ -541,7 +547,7 @@ val start = Seq(
 ```
 
 ```scala mdoc
-val mode = outcome.values(lsLatent.values(MAP(lsLatent, start)))
+val mode = lsLatent.result(MAP(lsLatent, start)).values
 mode.mean.weights
 mode.logScale.weights
 mode.logScale.intercept.exp

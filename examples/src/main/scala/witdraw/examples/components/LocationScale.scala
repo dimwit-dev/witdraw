@@ -27,9 +27,10 @@ import witdraw.inference.NUTS
   * sites, named by its path, e.g. `bloodPressure.scale.Weights`.
   *
   * Each part also has a typed record of its values, e.g. [[Linear.Values]],
-  * which nest like the parts do. A record can be read from a run of the model
-  * or from a posterior draw, turned into observations, and, being a tensor
-  * tree, averaged as a whole.
+  * which nest like the parts do. Each part returns its record, so the model's
+  * result holds the record of the whole model: in a forward run and in every
+  * posterior sample alike. A record can also be turned into observations,
+  * and, being a tensor tree, averaged as a whole.
   */
 object LocationScale:
 
@@ -41,18 +42,19 @@ object LocationScale:
     object Intercept extends Site[Tensor0[Float32]]
     object Weights extends Site[Tensor1[Feature, Float32]]
 
-    def apply(x: Tensor2[Patient, Feature, Float32])(using
-        ProbContext
-    ): Tensor1[Patient, Float32] =
+    /** `intercept + x · weights`, and the values of the intercept and weights. */
+    def apply(x: Tensor2[Patient, Feature, Float32])(using ProbContext) =
       val nFeatures = x.shape(Axis[Feature])
       val intercept = Intercept ~ Normal(0f, priorScale)
       val weights = Weights ~ Normal.isotropic(
         Tensor1(Axis[Feature] -> nFeatures).fill(0f),
         priorScale
       )
-      x.dot(Axis[Feature])(weights) +! intercept
+      (
+        output = x.dot(Axis[Feature])(weights) +! intercept,
+        values = Linear.Values(intercept, weights)
+      )
 
-    def values(v: SiteValues) = Linear.Values(v(Intercept), v(Weights))
     def observations(x: Linear.Values) =
       Seq(Intercept := x.intercept, Weights := x.weights)
 
@@ -73,10 +75,13 @@ object LocationScale:
     object scale extends Linear(priorScale = 0.5f)
     object Y extends Site[Tensor1[Patient, Float32]]
 
+    /** The outcome, and the values of its mean and scale. */
     def apply(x: Tensor2[Patient, Feature, Float32])(using ProbContext) =
-      Y ~ Normal(mean(x), scale(x).exp)
+      val m = mean(x)
+      val s = scale(x)
+      val y = Y ~ Normal(m.output, s.output.exp)
+      (y = y, values = Outcome.Values(m.values, s.values))
 
-    def values(v: SiteValues) = Outcome.Values(mean.values(v), scale.values(v))
     def observations(x: Outcome.Values) =
       mean.observations(x.mean) ++ scale.observations(x.scale)
 
@@ -86,14 +91,15 @@ object LocationScale:
   object bloodPressure extends Outcome
   object cholesterol extends Outcome
 
-  def model(x: Tensor2[Patient, Feature, Float32])(using ProbContext) =
-    (bloodPressure = bloodPressure(x), cholesterol = cholesterol(x))
-
   /** The values of all parameters of the model. */
   case class Values(bloodPressure: Outcome.Values, cholesterol: Outcome.Values)
 
-  def values(v: SiteValues) =
-    Values(bloodPressure.values(v), cholesterol.values(v))
+  /** The two outcomes, and the values of all parameters. */
+  def model(x: Tensor2[Patient, Feature, Float32])(using ProbContext) =
+    val bp = bloodPressure(x)
+    val ch = cholesterol(x)
+    (bloodPressure = bp.y, cholesterol = ch.y, values = Values(bp.values, ch.values))
+
   def observations(x: Values) =
     bloodPressure.observations(x.bloodPressure) ++
       cholesterol.observations(x.cholesterol)
@@ -146,12 +152,13 @@ object LocationScale:
     val (warmupKey, sampleKey) = Key(1L).split2()
     val adapted = NUTS.adapt(latent, warmupKey, start, numSteps = 500)
     println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
-    val (samples, infos) = adapted.sample(sampleKey, 1000).draws.unzip
-    println(f"NUTS divergences: ${infos.count(_.isDivergent)} / ${samples.length}")
+    val chain = adapted.sample(sampleKey, 1000)
+    println(f"NUTS divergences: ${chain.numDivergent} / ${chain.size}")
 
     // ---- posterior ----------------------------------------------------
-    // Each draw as a typed record, and their mean, computed on the whole tree.
-    val draws = samples.map(p => values(latent.values(p)))
+    // Each draw's values as a typed record, from the model's result, and
+    // their mean, computed on the whole tree.
+    val draws = chain.samples.map(_.values)
     val posteriorMean = Tensor0(1f / draws.size) **! draws.reduce(_ ++ _)
     println(
       f"bloodPressure.scale.weights: ${posteriorMean.bloodPressure.scale.weights}"

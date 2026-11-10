@@ -12,6 +12,12 @@ import witdraw.*
 import witdraw.distributions.{Half, Inverse}
 import witdraw.inference.{Diagnostics, NUTS}
 
+import plotwit.*
+import plotwit.plots.*
+import plotwit.PlotTargets.desktopBrowser
+import witdraw.ForwardSampler
+import witdraw.plots.TracePlot.tracePlot
+
 /** Linear regression with a regularized horseshoe prior on the coefficients,
   * after the PyMC example "Multivariate regression with a regularized
   * horseshoe" on the test scores of children with hearing loss.
@@ -34,19 +40,6 @@ object MVRegression:
       mother_hs: Option[Double],
       early_ident: Boolean,
       non_white: Boolean
-  )
-
-  val predictorNames = Seq(
-    "male",
-    "siblings",
-    "family_inv",
-    "non_english",
-    "prev_disab",
-    "age_test",
-    "non_severe_hl",
-    "mother_hs",
-    "early_ident",
-    "non_white"
   )
 
   trait Predictor derives Label // D: one entry per predictor
@@ -95,7 +88,14 @@ object MVRegression:
 
     val mu = x.dot(Axis[Predictor])(beta) +! beta0
     val scores = Scores ~ Normal.isotropic(mu, sigma)
-    (beta = beta, beta0 = beta0, sigma = sigma, scores = scores)
+    (
+      beta = beta,
+      beta0 = beta0,
+      sigma = sigma,
+      tau = tau,
+      c2 = c2,
+      scores = scores
+    )
 
   /** The children with all predictors known: their predictors, standardized to
     * mean 0 and standard deviation 1 as in the PyMC example, and scores.
@@ -180,10 +180,24 @@ object MVRegression:
       s"NUTS divergences: ${chains.map(_.numDivergent).sum} / ${numChains * numDraws}"
     )
 
-    val betaChains =
-      chains.map(
-        _.values(p => shrunkCoefficients(p(Z), p(Tau), p(Lambda))(p(C2)))
-      )
+    display(tracePlot(chains)(s => (sigma = s.sigma, tau = s.tau, c2 = s.c2)))
+
+    // the model's result at each draw, as for a prior sample; beta is computed
+    // in the model, like pm.Deterministic in PyMC
+    val samples = chains.map(_.samples)
+
+    val predictorNames = Seq(
+      "male",
+      "siblings",
+      "family_inv",
+      "non_english",
+      "prev_disab",
+      "age_test",
+      "non_severe_hl",
+      "mother_hs",
+      "early_ident",
+      "non_white"
+    )
 
     type Row = (name: String, mean: Float, sd: Float, rhat: Float, ess: Float)
 
@@ -217,11 +231,11 @@ object MVRegression:
 
     val rows =
       Seq(
-        scalarRow("sigma", chains.map(_(Sigma))),
-        scalarRow("tau", chains.map(_(Tau))),
-        scalarRow("c2", chains.map(_(C2))),
-        scalarRow("beta0", chains.map(_(Beta0)))
-      ) ++ vectorRows("beta", betaChains)
+        scalarRow("sigma", samples.map(_.map(_.sigma))),
+        scalarRow("tau", samples.map(_.map(_.tau))),
+        scalarRow("c2", samples.map(_.map(_.c2))),
+        scalarRow("beta0", samples.map(_.map(_.beta0)))
+      ) ++ vectorRows("beta", samples.map(_.map(_.beta)))
 
     println(
       f"${"parameter"}%-22s ${"mean"}%8s ${"sd"}%7s ${"rhat"}%6s ${"ess"}%7s"

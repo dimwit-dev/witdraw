@@ -73,7 +73,8 @@ object Quickstart:
     val (warmupKey, sampleKey) = nutsKey.split2()
     val adapted = NUTS.adapt(latent, warmupKey, latent.init, numSteps = 1000)
     val nSamples = 5000
-    val (samples, infos) = adapted.sample(sampleKey, nSamples).draws.unzip
+    // the model's result at each draw, as for the prior samples above
+    val samples = adapted.sample(sampleKey, nSamples).samples
 
     trait Draw derives Label
 
@@ -81,9 +82,9 @@ object Quickstart:
       val stacked = stack(draws, Axis[Draw])
       (stacked.mean(Axis[Draw]), stacked.std(Axis[Draw]))
 
-    val (alphaMean, alphaSd) = summary(samples.map(_(Alpha)))
-    val (betaMean, betaSd) = summary(samples.map(_(Beta)))
-    val (sigmaMean, sigmaSd) = summary(samples.map(_(Sigma)))
+    val (alphaMean, alphaSd) = summary(samples.map(_.alpha))
+    val (betaMean, betaSd) = summary(samples.map(_.beta))
+    val (sigmaMean, sigmaSd) = summary(samples.map(_.sigma))
 
     println(s"alpha: mean $alphaMean, sd $alphaSd   (true $alphaTrue)")
     println(s"beta:  mean $betaMean, sd $betaSd   (true $betaTrue)")

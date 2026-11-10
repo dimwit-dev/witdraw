@@ -14,10 +14,11 @@ class ComponentSuite extends munit.FunSuite:
   trait Channel extends Component:
     object Effect extends Site[Tensor0[Float32]]
 
+    /** The contribution of the spend, and the channel's values. */
     def apply(spend: Tensor1[Time, Float32])(using ProbContext) =
-      spend *! (Effect ~ HalfNormal(0f, 1f))
+      val effect = Effect ~ HalfNormal(0f, 1f)
+      (output = spend *! effect, values = Channel.Values(effect))
 
-    def values(v: SiteValues) = Channel.Values(v(Effect))
     def observations(x: Channel.Values) = Seq(Effect := x.effect)
 
   object Channel:
@@ -28,8 +29,6 @@ class ComponentSuite extends munit.FunSuite:
     object radio extends Channel
     object Noise extends Site[Tensor0[Float32]]
 
-    def values(v: SiteValues) =
-      Media.Values(tv.values(v), radio.values(v), v(Noise))
     def observations(x: Media.Values) =
       tv.observations(x.tv) ++ radio.observations(x.radio) :+ (Noise := x.noise)
 
@@ -51,9 +50,11 @@ class ComponentSuite extends munit.FunSuite:
   lazy val yData = Tensor1(Axis[Time]).fromArray(Array(1.2f, 2.1f, 3.5f))
 
   def model(using ProbContext) =
-    val contribution = tv(tvSpend) + radio(radioSpend)
+    val t = tv(tvSpend)
+    val r = radio(radioSpend)
     val noise = Noise ~ HalfNormal(0f, 1f)
-    Y ~ Normal.isotropic(contribution, noise)
+    val y = Y ~ Normal.isotropic(t.output + r.output, noise)
+    (y = y, values = Media.Values(t.values, r.values, noise))
 
   test("sites are named by the path of their components"):
     assertEquals(tv.Effect.name, "media.tv.Effect")
@@ -114,13 +115,12 @@ class ComponentSuite extends munit.FunSuite:
   def mediaValues(tv: Float, radio: Float, noise: Float) =
     Media.Values(Channel.Values(Tensor0(tv)), Channel.Values(Tensor0(radio)), Tensor0(noise))
 
-  test("a component reads its values as a typed record, from a trace"):
-    val (_, tr) = ForwardSampler.run(Key(0))(withTrace(model))
-    val v = media.values(tr)
-    assertEquals(v.tv.effect.item, tr(tv.Effect).item)
-    assertEquals(v.noise.item, tr(Noise).item)
+  test("a component returns its values as a typed record, in a forward run"):
+    val (result, tr) = ForwardSampler.run(Key(0))(withTrace(model))
+    assertEquals(result.values.tv.effect.item, tr(tv.Effect).item)
+    assertEquals(result.values.noise.item, tr(Noise).item)
 
-  test("a component reads its values as a typed record, from Latent"):
+  test("a component returns its values as a typed record, in the posterior"):
     val latent = Latent.discover:
       transform(
         tv.Effect.withBijector(Bijector.exp),
@@ -130,7 +130,7 @@ class ComponentSuite extends munit.FunSuite:
         observe(Y := yData)(model)
     // the record also gives the observations, e.g. for a starting point
     val p = latent.initWith(media.observations(mediaValues(2f, 0.5f, 1.5f))*)
-    val v = media.values(latent.values(p))
+    val v = latent.result(p).values
     assertEqualsFloat(v.tv.effect.item, 2f, 1e-5f)
     assertEqualsFloat(v.radio.effect.item, 0.5f, 1e-5f)
     assertEqualsFloat(v.noise.item, 1.5f, 1e-5f)

@@ -203,7 +203,7 @@ object HMM:
     * Dirichlet, RowwiseUniformSimplex), and `mu` ordered, which its Normal
     * prior does not say, so it needs a constraint.
     */
-  def latent(y: Tensor1[Time, Float32]): Latent =
+  def latent(y: Tensor1[Time, Float32]) =
     Latent.discover(transform(Mu.withBijector(Bijector.ordered[State]))(observed(y)))
 
   /** Draw parameters from their priors and simulate a length-`n` sequence. */
@@ -262,14 +262,16 @@ object HMM:
     val adapted =
       NUTS.adapt(posterior, warmupKey, posterior.initRandom(Key(2L)), numSteps = 500)
     println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
-    val (samples, infos) = adapted.sample(sampleKey, 500).draws.unzip
+    val chain = adapted.sample(sampleKey, 500)
     println(
-      f"NUTS divergences: ${infos.count(_.isDivergent)} / ${samples.size}"
+      f"NUTS divergences: ${chain.numDivergent} / ${chain.size}"
     )
+    // the model's result at each draw
+    val samples = chain.samples
 
     trait Draw derives Label
-    val muMean = stack(samples.map(_(Mu)), Axis[Draw]).mean(Axis[Draw])
-    val sigmaMean = stack(samples.map(_(Sigma)), Axis[Draw]).mean
+    val muMean = stack(samples.map(_.mu), Axis[Draw]).mean(Axis[Draw])
+    val sigmaMean = stack(samples.map(_.sigma), Axis[Draw]).mean
     println(
       s"mu:    $muMean   (true ${params.mu})"
     )

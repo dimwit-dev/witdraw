@@ -22,7 +22,7 @@ class TransformSuite extends munit.FunSuite:
   test("the chosen bijector is used: any parameters give increasing values"):
     val latent = Latent.discover(ordered)
     for i <- 0 until 5 do
-      val mu = latent.initRandom(Key(i))(Mu).toArray
+      val mu = latent.result(latent.initRandom(Key(i))).mu.toArray
       assert(mu.sliding(2).forall(p => p(0) < p(1)), mu.mkString(", "))
 
   test("a bijector to another type does not compile"):
