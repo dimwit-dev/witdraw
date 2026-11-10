@@ -77,7 +77,8 @@ lazy val plots = (project in file("plots"))
     name := "witdraw-plots",
     description := "Plots for WitDraw (box plots, MCMC trace plots), built on plotwit",
     libraryDependencies ++= Seq(
-      "ch.contrafactus" %% "plotwit-core" % "0.3-SNAPSHOT" changing ()
+      "ch.contrafactus" %% "plotwit-core" % "0.3-SNAPSHOT" changing (),
+      "org.scalameta" %% "munit" % "1.0.0" % Test
     ),
     Compile / packageSrc / publishArtifact := true,
     Compile / packageDoc / publishArtifact := true,

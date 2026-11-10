@@ -56,6 +56,26 @@ private[plots] object Draws:
   def flat[T <: Tuple: Labels](t: Tensor[T, Float32]): Array[Double] =
     t.flatten.toArray.map(_.toDouble)
 
+  /** The `p` quantile of sorted values, interpolating linearly between them,
+    * as NumPy does by default.
+    */
+  def quantile(sorted: Array[Double], p: Double): Double =
+    val pos = p * (sorted.length - 1)
+    val lo = math.floor(pos).toInt
+    val hi = math.min(lo + 1, sorted.length - 1)
+    sorted(lo) + (pos - lo) * (sorted(hi) - sorted(lo))
+
+  /** The narrowest interval holding a fraction `p` of the sorted values, as in
+    * ArviZ.
+    */
+  def hdi(sorted: Array[Double], p: Double): (Double, Double) =
+    val n = sorted.length
+    val inside = math.floor(p * n).toInt
+    if inside <= 0 || inside >= n then (sorted.head, sorted.last)
+    else
+      val start = (0 until n - inside).minBy(i => sorted(i + inside) - sorted(i))
+      (sorted(start), sorted(start + inside))
+
   /** The draws of each field of `records`, one record per draw of each chain,
     * in the order of the fields. The elements are named after the field and,
     * along each axis, the entry's name from `axisNames`, or its index:
