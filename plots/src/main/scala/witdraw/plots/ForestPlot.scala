@@ -108,11 +108,11 @@ object ForestPlot:
       val sorted = xs.sorted
       val estimate = pointEstimate match
         case PointEstimate.Mean   => sorted.sum / sorted.length
-        case PointEstimate.Median => quantile(sorted, 0.5)
+        case PointEstimate.Median => Draws.quantile(sorted, 0.5)
       val intervals = probs.map: p =>
         interval match
-          case Interval.ETI => (quantile(sorted, (1 - p) / 2), quantile(sorted, (1 + p) / 2))
-          case Interval.HDI => hdi(sorted, p)
+          case Interval.ETI => (Draws.quantile(sorted, (1 - p) / 2), Draws.quantile(sorted, (1 + p) / 2))
+          case Interval.HDI => Draws.hdi(sorted, p)
       (label, chain, estimate, intervals)
 
     def fields(label: String, chain: Option[String]): Seq[(String, Json)] =
@@ -217,23 +217,3 @@ object ForestPlot:
         )
       )
     )
-
-  /** The `p` quantile of sorted values, interpolating linearly between them,
-    * as NumPy does by default.
-    */
-  private def quantile(sorted: Array[Double], p: Double): Double =
-    val pos = p * (sorted.length - 1)
-    val lo = math.floor(pos).toInt
-    val hi = math.min(lo + 1, sorted.length - 1)
-    sorted(lo) + (pos - lo) * (sorted(hi) - sorted(lo))
-
-  /** The narrowest interval holding a fraction `p` of the sorted values, as in
-    * ArviZ.
-    */
-  private def hdi(sorted: Array[Double], p: Double): (Double, Double) =
-    val n = sorted.length
-    val inside = math.floor(p * n).toInt
-    if inside <= 0 || inside >= n then (sorted.head, sorted.last)
-    else
-      val start = (0 until n - inside).minBy(i => sorted(i + inside) - sorted(i))
-      (sorted(start), sorted(start + inside))

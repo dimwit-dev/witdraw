@@ -10,13 +10,15 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
 import witdraw.*
 import witdraw.distributions.{Half, Inverse}
-import witdraw.inference.{Diagnostics, NUTS}
+import witdraw.inference.NUTS
 
 import plotwit.*
 import plotwit.plots.*
 import plotwit.PlotTargets.desktopBrowser
 import witdraw.ForwardSampler
 import witdraw.plots.TracePlot.tracePlot
+import witdraw.plots.ForestPlot.forestPlot
+import witdraw.plots.Summary.summary
 
 /** Linear regression with a regularized horseshoe prior on the coefficients,
   * after the PyMC example "Multivariate regression with a regularized
@@ -182,10 +184,6 @@ object MVRegression:
 
     display(tracePlot(chains)(s => (sigma = s.sigma, tau = s.tau, c2 = s.c2)))
 
-    // the model's result at each draw, as for a prior sample; beta is computed
-    // in the model, like pm.Deterministic in PyMC
-    val samples = chains.map(_.samples)
-
     val predictorNames = Seq(
       "male",
       "siblings",
@@ -198,49 +196,20 @@ object MVRegression:
       "early_ident",
       "non_white"
     )
+    val predictors = Axis[Predictor].names(predictorNames)
 
-    type Row = (name: String, mean: Float, sd: Float, rhat: Float, ess: Float)
-
-    def scalarRow(name: String, perChain: Seq[Seq[Tensor0[Float32]]]): Row =
-      val all = stack(perChain.flatten, Axis[Sample])
-      (
-        name = name,
-        mean = all.mean.item,
-        sd = all.std.item,
-        rhat = Diagnostics.rhat(perChain).item,
-        ess = Diagnostics.ess(perChain).item
-      )
-
-    def vectorRows(
-        name: String,
-        perChain: Seq[Seq[Tensor1[Predictor, Float32]]]
-    ): Seq[Row] =
-      val all = stack(perChain.flatten, Axis[Sample])
-      val means = all.mean(Axis[Sample]).toArray
-      val sds = all.std(Axis[Sample]).toArray
-      val rhat = Diagnostics.rhat(perChain).toArray
-      val ess = Diagnostics.ess(perChain).toArray
-      predictorNames.indices.map: i =>
-        (
-          name = s"$name[${predictorNames(i)}]",
-          mean = means(i),
-          sd = sds(i),
-          rhat = rhat(i),
-          ess = ess(i)
-        )
-
-    val rows =
-      Seq(
-        scalarRow("sigma", samples.map(_.map(_.sigma))),
-        scalarRow("tau", samples.map(_.map(_.tau))),
-        scalarRow("c2", samples.map(_.map(_.c2))),
-        scalarRow("beta0", samples.map(_.map(_.beta0)))
-      ) ++ vectorRows("beta", samples.map(_.map(_.beta)))
+    // beta is computed in the model, like pm.Deterministic in PyMC, so it is
+    // part of the model's result at each draw
+    display(forestPlot(chains, predictors)(s => (beta = s.beta)))
 
     println(
-      f"${"parameter"}%-22s ${"mean"}%8s ${"sd"}%7s ${"rhat"}%6s ${"ess"}%7s"
-    )
-    for r <- rows do
-      println(
-        f"${r.name}%-22s ${r.mean}%8.3f ${r.sd}%7.3f ${r.rhat}%6.3f ${r.ess}%7.0f"
+      summary(chains, predictors)(s =>
+        (
+          sigma = s.sigma,
+          tau = s.tau,
+          c2 = s.c2,
+          beta0 = s.beta0,
+          beta = s.beta
+        )
       )
+    )
