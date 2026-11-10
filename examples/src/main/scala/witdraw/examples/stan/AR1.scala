@@ -66,7 +66,7 @@ object AR1:
   /** The latent sites of the model observed on `y`. `sigma` stays positive, as
     * `Latent` reads off its HalfCauchy prior.
     */
-  def latent(y: Tensor1[Time, Float32]): Latent =
+  def latent(y: Tensor1[Time, Float32]) =
     Latent.discover(observed(y))
 
   // -- Generative helpers -------------------------------------------------

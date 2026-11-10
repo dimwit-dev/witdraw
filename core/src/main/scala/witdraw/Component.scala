@@ -28,6 +28,23 @@ object Scope:
   * bloodPressure.mean.Intercept.name   // "bloodPressure.mean.Intercept"
   * }}}
   *
+  * A part can return a typed record of its values with its output, so that
+  * the model's result, and so every prior and posterior sample, carries it:
+  * {{{
+  * trait Linear extends Component:
+  *   object Intercept extends Site[Tensor0[Float32]]
+  *   object Weights extends Site[Tensor1[Feature, Float32]]
+  *   def apply(x: Tensor2[Patient, Feature, Float32])(using ProbContext) =
+  *     val intercept = Intercept ~ Normal(0f, 1f)
+  *     val weights = Weights ~ ...
+  *     (output = x.dot(Axis[Feature])(weights) +! intercept, values = Linear.Values(intercept, weights))
+  *
+  * object Linear:
+  *   case class Values(intercept: Tensor0[Float32], weights: Tensor1[Feature, Float32])
+  * }}}
+  * A record of tensors like `Linear.Values` is a `TensorTree`, so it can be
+  * averaged, saved or mapped over as a whole.
+  *
   * A component is named like a site, after its object, and is inside the
   * component in whose body it is declared. Parameters of a part are trait
   * parameters, e.g. `trait Linear(priorScale: Float)` and

@@ -96,7 +96,7 @@ class SupportSuite extends munit.FunSuite:
   test("without constraints, a HalfNormal site is sampled on the log scale"):
     val latent = Latent.discover(observe(Y := yData)(model))
     val p = latent.initWith(Mu := Tensor0(0.3f), Sigma := Tensor0(1.5f))
-    assertEqualsFloat(p(Sigma).item, 1.5f, 1e-5f)
+    assertEqualsFloat(latent.result(p).sigma.item, 1.5f, 1e-5f)
     // sigma = exp(z), so log |d sigma / dz| = z = log sigma
     assertEqualsFloat(
       (latent.logDensity(p) - latent.modelLogDensity(p)).item,
@@ -109,7 +109,7 @@ class SupportSuite extends munit.FunSuite:
   test("a Uniform site is sampled on the logit scale of its interval"):
     val latent = Latent.discover(P ~ Uniform(Tensor0(0f), Tensor0(2f)))
     val p = latent.initWith(P := Tensor0(0.5f))
-    assertEqualsFloat(p(P).item, 0.5f, 1e-5f)
+    assertEqualsFloat(latent.result(p).item, 0.5f, 1e-5f)
     // x = 2·σ(z), so log |dx/dz| = log(2·u·(1-u)) with u = x / 2
     assertEqualsFloat(
       (latent.logDensity(p) - latent.modelLogDensity(p)).item,
@@ -122,11 +122,12 @@ class SupportSuite extends munit.FunSuite:
   object Locs extends Site[Tensor1[Comp, Float32]]
 
   def mixturePrior(using ProbContext) =
-    Weights ~ Dirichlet(Tensor1(Axis[Comp] -> 3).fill(1f))
-    Locs ~ Normal(
+    val weights = Weights ~ Dirichlet(Tensor1(Axis[Comp] -> 3).fill(1f))
+    val locs = Locs ~ Normal(
       Tensor1(Axis[Comp] -> 3).fill(0f),
       Tensor1(Axis[Comp] -> 3).fill(10f)
     )
+    (weights = weights, locs = locs)
 
   test("a Dirichlet site is a simplex, and a constraint overrides a default"):
     val latent =
@@ -134,7 +135,7 @@ class SupportSuite extends munit.FunSuite:
     val weights = Tensor1(Axis[Comp]).fromArray(Array(0.2f, 0.5f, 0.3f))
     val locs = Tensor1(Axis[Comp]).fromArray(Array(-1f, 0f, 2f))
     val p = latent.initWith(Weights := weights, Locs := locs)
-    assertEqualsFloat(p(Weights).sum.item, 1f, 1e-5f)
+    assertEqualsFloat(latent.result(p).weights.sum.item, 1f, 1e-5f)
     // K-1 = 2 coordinates for the simplex, 3 for the locations
     assertEquals(numParams(latent)(p), 5)
     // ordered: an unordered start is outside the constraint
@@ -149,7 +150,7 @@ class SupportSuite extends munit.FunSuite:
       R ~ LKJ(Tensor0(2f), Shape(Axis[AB] -> 3, Axis[Prime[AB]] -> 3))
     // one unconstrained value per entry below the diagonal
     assertEquals(numParams(latent)(latent.init), 3)
-    val r = latent.init(R)
+    val r = latent.result(latent.init)
     for i <- 0 until 3 do
       assertEqualsFloat(
         r(Axis[AB].at(i))(Axis[Prime[AB]].at(i)).item,
@@ -172,16 +173,15 @@ class SupportSuite extends munit.FunSuite:
 
   def boundedBySigma(using ProbContext) =
     val sigma = Sigma ~ HalfNormal(0f, 1f)
-    X ~ Uniform(Tensor0(0f), sigma)
+    (sigma = sigma, x = X ~ Uniform(Tensor0(0f), sigma))
 
   test("a support may depend on another latent site"):
     val latent = Latent.discover(boundedBySigma)
     // X = sigma·σ(z) lies in (0, sigma) for every sigma
     val p = latent.initWith(Sigma := Tensor0(3f), X := Tensor0(2.5f))
-    assertEqualsFloat(p(Sigma).item, 3f, 1e-5f)
-    assertEqualsFloat(p(X).item, 2.5f, 1e-4f)
-    val v = latent.values(p)
-    assertEqualsFloat(v(X).item, 2.5f, 1e-4f)
+    val r = latent.result(p)
+    assertEqualsFloat(r.sigma.item, 3f, 1e-5f)
+    assertEqualsFloat(r.x.item, 2.5f, 1e-4f)
     // log-Jacobian: log sigma for Sigma = exp(z), and log(sigma·u·(1-u)) for
     // X, with u = x / sigma
     val u = 2.5 / 3
@@ -214,7 +214,7 @@ class SupportSuite extends munit.FunSuite:
 
   test("a Rowwise(Simplex) site has a simplex in every row"):
     val latent = Latent.discover(M ~ StochasticMatrix(2, 3))
-    val rowSums = latent.init(M).sum(Axis[Col])
+    val rowSums = latent.result(latent.init).sum(Axis[Col])
     for i <- 0 until 2 do
       assertEqualsFloat(rowSums.select(Axis[Row].at(i)).item, 1f, 1e-5f)
     // 2 rows of K-1 = 2 coordinates
@@ -223,7 +223,7 @@ class SupportSuite extends munit.FunSuite:
     val p = latent.init
     val row = Bijector.simplexStickBreaking[Support.Unconstrained, Col]
     val rowsLogDet = (0 until 2)
-      .map(i => row.logDetJac(row.inverse(p(M).select(Axis[Row].at(i)))))
+      .map(i => row.logDetJac(row.inverse(latent.result(p).select(Axis[Row].at(i)))))
       .reduce(_ + _)
     assertEqualsFloat(
       (latent.logDensity(p) - latent.modelLogDensity(p)).item,
@@ -243,7 +243,7 @@ class SupportSuite extends munit.FunSuite:
 
   test("a Custom support brings its own bijector"):
     val latent = Latent.discover(O ~ Increasing(3))
-    val xs = latent.init(O).toArray
+    val xs = latent.result(latent.init).toArray
     assert(xs.sliding(2).forall(p => p(0) < p(1)), xs.mkString(", "))
     intercept[IllegalArgumentException]:
       latent.initWith(O := Tensor1(Axis[K]).fromArray(Array(1f, 0f, 2f)))

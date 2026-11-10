@@ -5,12 +5,26 @@ import dimwit.*
 
 /** The draws of one chain of a sampler, as from [[SamplingAlgorithm.sample]]:
   * a sequence of `(position, info)` pairs.
+  *
+  * A position is what the sampler moves around in, e.g. a `latent.Params`: the
+  * unconstrained values of all latent sites, in one vector. [[samples]] gives
+  * the model's result at each draw, the same type as a forward run of the
+  * model, e.g. a prior sample:
   * {{{
+  * def model(using ProbContext) =
+  *   val mu = Mu ~ Normal(0f, 1f)
+  *   val y = Y ~ Normal(mu, 1f)
+  *   (mu = mu, y = y)
+  *
+  * ForwardSampler.sample(key, 1000)(model).map(_.mu)   // the prior of mu
+  *
+  * val latent = Latent.discover(observe(Y := yData)(model))
   * val chain = adapted.sample(key, 1000)
-  * chain(Sigma)                    // the values of Sigma
-  * chain.values(p => p(Mu).sum)    // a value computed from each draw
-  * chain.numDivergent              // the divergent transitions of NUTS
+  * chain.samples.map(_.mu)        // the posterior of mu
+  * chain.numDivergent             // the divergent transitions of NUTS
   * }}}
+  * `samples` runs the model at every draw, so keep its result rather than
+  * calling it again.
   *
   * Several chains are a `Seq[Chain]`, e.g. for [[Diagnostics.rhat]]. A chain
   * is ordinary code, e.g. a warmup followed by sampling, so to run several at
@@ -34,17 +48,17 @@ final class Chain[P, I](val draws: Seq[(P, I)]):
   /** The number of draws. */
   def size: Int = draws.size
 
+  /** Where the sampler was at each draw, e.g. a `latent.Params`; to read
+    * them, use [[samples]].
+    */
   def positions: Seq[P] = draws.map(_._1)
+
+  /** The model's result at each draw. */
+  def samples[A](using model: ModelResult[P, A]): Seq[A] =
+    positions.map(model.result)
 
   /** What the sampler reported about each draw. */
   def infos: Seq[I] = draws.map(_._2)
-
-  /** The value of `f` at each position. */
-  def values[Q](f: P => Q): Seq[Q] = positions.map(f)
-
-  /** The values of `site`. */
-  def apply[T <: Tuple, V](site: SiteDef[T, V])(using reader: SiteReader[P]): Seq[Tensor[T, V]] =
-    values(p => reader.values(p)(site))
 
   /** Whether each draw was a divergent transition. */
   def divergent(using info: SamplerInfo[I]): Seq[Boolean] = infos.map(info.isDivergent)

@@ -19,23 +19,23 @@ class LatentSuite extends munit.FunSuite:
     // discover traces the model with the fixed key Key(0)
     val (_, tr) =
       ForwardSampler.run(Key(0))(withTrace(observe(Y := yData)(model)))
-    assertEqualsFloat(latent.init(Mu).item, tr(Mu).item, 1e-6f)
-    assertEqualsFloat(latent.init(Sigma).item, tr(Sigma).item, 1e-5f)
+    assertEqualsFloat(latent.result(latent.init).mu.item, tr(Mu).item, 1e-6f)
+    assertEqualsFloat(latent.result(latent.init).sigma.item, tr(Sigma).item, 1e-5f)
 
   test("initRandom draws unconstrained values between -radius and radius"):
     val starts = Key(1).split(20).map(latent.initRandom(_))
-    val mus = starts.map(_(Mu).item)
-    val sigmas = starts.map(_(Sigma).item)
+    val mus = starts.map(latent.result(_).mu.item)
+    val sigmas = starts.map(latent.result(_).sigma.item)
     assertEquals(mus.distinct.size, 20)
     assert(mus.forall(m => m > -2f && m < 2f), s"mu $mus")
     // sigma is exp of its unconstrained value
     assert(sigmas.forall(s => s > math.exp(-2).toFloat && s < math.exp(2).toFloat), s"sigma $sigmas")
     val narrow = latent.initRandom(Key(2), radius = 0.1f)
-    assert(math.abs(narrow(Mu).item) < 0.1f)
+    assert(math.abs(latent.result(narrow).mu.item) < 0.1f)
 
   test("Latent log-densities: model density, plus the Jacobian for sampling"):
     val p = latent.initWith(Mu := Tensor0(0.3f), Sigma := Tensor0(1.5f))
-    assertEqualsFloat(p(Sigma).item, 1.5f, 1e-5f)
+    assertEqualsFloat(latent.result(p).sigma.item, 1.5f, 1e-5f)
     assertEqualsFloat(
       latent.modelLogDensity(p).item,
       manualLogProb(0.3f, 1.5f),
@@ -52,10 +52,33 @@ class LatentSuite extends munit.FunSuite:
     val p = latent.initWith(Mu := Tensor0(0f), Sigma := Tensor0(1f))
     val grad = Autodiff.grad(latent.modelLogDensity)(p).value
     // d/dmu at mu = 0, sigma = 1: sum(y) - mu / 100
-    assertEqualsFloat(grad(Mu).item, 1.5f, 1e-4f)
+    // the gradient is not a point of the posterior: read its entry for Mu by site
+    assertEqualsFloat(latent.values(grad)(Mu).item, 1.5f, 1e-4f)
+
+  test("result is the model's own result at the parameters, with the data"):
+    val p = latent.initWith(Mu := Tensor0(0.3f), Sigma := Tensor0(1.5f))
+    val r = latent.result(p)
+    assertEqualsFloat(r.mu.item, 0.3f, 1e-5f)
+    assertEqualsFloat(r.sigma.item, 1.5f, 1e-5f)
+    assertEquals(r.y.toArray.toSeq, yData.toArray.toSeq)
+
+  test("the samples of a chain are the model's results at each draw"):
+    val starts = Key(4).split(5).map(latent.initRandom(_))
+    val chain = inference.Chain(starts.map(_ -> ()))
+    assertEquals(chain.samples.map(_.mu.item), starts.map(latent.result(_).mu.item))
+    assertEquals(chain.samples.map(_.y.toArray.toSeq).distinct, Seq(yData.toArray.toSeq))
+
+  test("a result that cannot be compiled is computed eagerly"):
+    // `.item` needs a concrete value, so the model cannot be traced by jit
+    val eager = Latent.discover:
+      val mu = Mu ~ Normal(0f, 1f)
+      (mu = mu, positive = Tensor0(if mu.item > 0 then 1f else 0f))
+    val p = eager.initWith(Mu := Tensor0(0.5f))
+    assertEquals(eager.result(p).positive.item, 1f)
+    assertEquals(eager.result(eager.initWith(Mu := Tensor0(-0.5f))).positive.item, 0f)
 
   test("Latent errors: unknown site, bijector on observed site"):
-    intercept[NoSuchElementException](latent.init(Y))
+    intercept[NoSuchElementException](latent.initWith(Y := yData))
     intercept[IllegalArgumentException]:
       Latent.discover:
         transform(Y.withBijector(Bijector.exp[Tuple1[Sample]])):
@@ -86,8 +109,8 @@ class LatentSuite extends munit.FunSuite:
     val weights = Tensor1(Axis[Comp]).fromArray(Array(0.2f, 0.5f, 0.3f))
     val locs = Tensor1(Axis[Comp]).fromArray(Array(-1f, 0f, 2f))
     val p = mixture.initWith(Weights := weights, Locs := locs)
-    assertEqualsFloat(p(Weights).sum.item, 1f, 1e-5f)
-    assertEqualsFloat(p(Weights).select(Axis[Comp].at(1)).item, 0.5f, 1e-5f)
+    assertEqualsFloat(mixture.result(p).weights.sum.item, 1f, 1e-5f)
+    assertEqualsFloat(mixture.result(p).weights.select(Axis[Comp].at(1)).item, 0.5f, 1e-5f)
     val expected = ModelScorer.run:
       observe(Weights := weights, Locs := locs)(mixturePrior)
     assertEqualsFloat(mixture.modelLogDensity(p).item, expected.item, 1e-3f)
@@ -110,7 +133,7 @@ class LatentSuite extends munit.FunSuite:
         Neg ~ Normal(-10f, 0.1f)
     intercept[IllegalArgumentException](constrained.init)
     val start = constrained.initRandom(Key(3))
-    assert(start(Neg).item > 0f)
+    assert(constrained.result(start).item > 0f)
 
   test("a start value outside its constraint is an error, with a hint"):
     val unordered = Tensor1(Axis[Comp]).fromArray(Array(1f, -1f, 0f))

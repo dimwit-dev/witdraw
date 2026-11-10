@@ -15,7 +15,7 @@ import plotwit.PlotTargets.desktopBrowser
 import plotwit.{display, grid}
 import witdraw.distributions.LKJ
 import witdraw.Latent
-import witdraw.ProbProg
+import witdraw.ProbContext
 import witdraw.observe
 import witdraw.inference.NUTS
 import dimwit.jax.Jax
@@ -98,10 +98,6 @@ object AdmissionEx:
 
     object Alpha extends Site[Tensor0[Float32]] // the mean of the intercepts
     object Beta extends Site[Tensor0[Float32]] // the mean of the slopes
-    object AlphaDept
-        extends Site[Tensor1[Dept, Float32]] // the intercept per department
-    object BetaDept
-        extends Site[Tensor1[Dept, Float32]] // the slope per department
     object Sigma
         extends Site[
           Tensor1[AB, Float32]
@@ -118,15 +114,10 @@ object AdmissionEx:
 
     val male = Tensor1(Axis[Case]).fromArray(isMale.map(_.toFloat).toArray)
 
-    case class Result(
-        alphaDept: AlphaDept.Value,
-        betaDept: BetaDept.Value
-    )
-
     // McElreath's varying intercepts and slopes model of the admissions:
     // logit p = alphaDept + betaDept * male, where the pairs
     // (alphaDept, betaDept) are bivariate normal around (alpha, beta).
-    val model: ProbProg[Result] =
+    def model(using ProbContext) =
       val alpha = Alpha ~ Normal(0f, 10f)
       val beta = Beta ~ Normal(0f, 1f)
       val sigma = Sigma ~ HalfCauchy(
@@ -153,7 +144,7 @@ object AdmissionEx:
       val admissionProb =
         Prob(Tensor.sigmoid(alphaPerCase + betaPerCase * male))
       val admission = Admission ~ Bernoulli(admissionProb)
-      Result(alphaDeptValues, betaDeptValues)
+      (alpha = alpha, beta = beta, sigma = sigma, r = r, deptAB = abPerDept)
 
     val admission = Tensor1(Axis[Case]).fromArray(admitted.map(_ == 1).toArray)
 
@@ -173,19 +164,21 @@ object AdmissionEx:
     val adapted =
       NUTS.adapt(posterior, warmupKey, posterior.init, numSteps = numWarmup)
     println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
-    val (nutsSamples, nutsInfos) = adapted.sample(sampleKey, nSamples).draws.unzip
-    println(s"NUTS divergences: ${nutsInfos.count(_.isDivergent)} / $nSamples")
+    val chain = adapted.sample(sampleKey, nSamples)
+    println(s"NUTS divergences: ${chain.numDivergent} / $nSamples")
+    // the model's result at each draw
+    val samples = chain.samples
 
     trait Sample derives Label
     def summary[T <: Tuple: Labels](draws: Seq[Tensor[T, Float32]]) =
       val stacked = stack(draws, Axis[Sample])
       (stacked.mean(Axis[Sample]), stacked.std(Axis[Sample]))
 
-    val (alphaMean, alphaSd) = summary(nutsSamples.map(_(Alpha)))
-    val (betaMean, betaSd) = summary(nutsSamples.map(_(Beta)))
-    val (sigmaMean, _) = summary(nutsSamples.map(_(Sigma)))
-    val (rMean, _) = summary(nutsSamples.map(_(R)))
-    val (deptMean, deptSd) = summary(nutsSamples.map(_(DeptAB)))
+    val (alphaMean, alphaSd) = summary(samples.map(_.alpha))
+    val (betaMean, betaSd) = summary(samples.map(_.beta))
+    val (sigmaMean, _) = summary(samples.map(_.sigma))
+    val (rMean, _) = summary(samples.map(_.r))
+    val (deptMean, deptSd) = summary(samples.map(_.deptAB))
     println(f"alpha: mean ${alphaMean.item}%6.2f  sd ${alphaSd.item}%5.2f")
     println(f"beta:  mean ${betaMean.item}%6.2f  sd ${betaSd.item}%5.2f")
     println(s"sigma (intercept, slope): $sigmaMean")

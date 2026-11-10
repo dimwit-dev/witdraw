@@ -11,6 +11,12 @@ import witdraw.plots.TracePlot.tracePlot
 import plotwit.PlotTargets.desktopBrowser
 import plotwit.{display, grid}
 import plotwit.plots.histogramPlot
+import scala.concurrent.{Future, blocking}
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
+import witdraw.inference.NUTSAdaptation
+import witdraw.ProbContext
 
 object WaterLandExample:
 
@@ -53,21 +59,21 @@ object WaterLandExample:
       NUTS.adapt(latent, warmupKey, latent.init, numSteps = numWarmup)
 
     println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
-    val chain = adapted.sample(sampleKey, nSamples)
+    val runs =
+      for key <- sampleKey.split(4)
+      yield Future(blocking(adapted.sample(key, nSamples)))
+    val chains = Await.result(Future.sequence(runs), Duration.Inf)
 
-    println(f"NUTS divergences: ${chain.numDivergent} / $nSamples")
-    val acceptance = chain.infos.map(_.acceptanceRate)
-    println(
-      f"NUTS mean acceptance rate: ${acceptance.sum / acceptance.size}%.3f"
-    )
+    // the model's result at each draw, as for the prior samples
+    val posterior = chains.flatMap(_.samples)
+    val posteriorSamples = posterior.map(_.waterProp)
 
-    // Posterior predictive check
-    val predictiveKeys = predictiveKey.split(chain.size)
-    val posteriorPredictiveSamples = chain.positions
-      .zip(predictiveKeys)
-      .map: (p, key) =>
+    // Posterior predictive check: the model run forward, with the parameters
+    // of each posterior draw
+    val posteriorPredictiveSamples =
+      posterior.zip(predictiveKey.split(posterior.size)).map: (s, key) =>
         ForwardSampler.run(key):
-          observe(WaterProp := p(WaterProp))(model(numTosses))
+          observe(WaterProp := s.waterProp)(model(numTosses))
 
     def histogram(values: Seq[Tensor0[Float32]], title: String) =
       histogramPlot(stack(values, Axis[Sample]), _.title := title)
@@ -80,14 +86,14 @@ object WaterLandExample:
               priorPredictiveSamples.map(_.asFloat32),
               "prior predictive samples"
             ),
-            histogram(chain(WaterProp), "posterior samples"),
+            histogram(posteriorSamples, "posterior samples"),
             histogram(
               posteriorPredictiveSamples.map(_.waterCount.asFloat32),
               s"posterior predictive samples (observed: ${waterCountData.item})"
             )
           ),
           Seq(
-            tracePlot(Seq(chain))(WaterProp)
+            tracePlot(chains)(s => (waterProp = s.waterProp))
           )
         )
       )

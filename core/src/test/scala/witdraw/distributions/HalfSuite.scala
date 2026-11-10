@@ -52,7 +52,7 @@ class HalfSuite extends munit.FunSuite:
   test("a Half site is sampled on the log scale"):
     val latent = Latent.discover(Tau ~ Half(StudentT(5f, 0f, 1f)))
     val p = latent.initWith(Tau := Tensor0(1.5f))
-    assertEqualsFloat(p(Tau).item, 1.5f, 1e-5f)
+    assertEqualsFloat(latent.result(p).item, 1.5f, 1e-5f)
     // tau = exp(z), so log |d tau / dz| = z = log tau
     assertEqualsFloat(
       (latent.logDensity(p) - latent.modelLogDensity(p)).item,

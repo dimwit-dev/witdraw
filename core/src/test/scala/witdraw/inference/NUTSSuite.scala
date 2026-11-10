@@ -33,17 +33,18 @@ class NUTSSuite extends munit.FunSuite:
       case InverseMassMatrix.Diagonal(v) => v
       case other                         => fail(s"not diagonal: $other")
     // the warmup shrinks the estimate slightly towards 1e-3
-    assertEqualsFloat(variances(Narrow).item, 0.01f, 0.004f)
-    assertEqualsFloat(variances(Wide).item, 100f, 40f)
+    // the mass matrix is not a point of the posterior: read its entries by site
+    assertEqualsFloat(latent.values(variances)(Narrow).item, 0.01f, 0.004f)
+    assertEqualsFloat(latent.values(variances)(Wide).item, 100f, 40f)
     assert(adapted.stepSize > 0.1, s"step size ${adapted.stepSize}")
 
   test("NUTS samples the target with the adapted parameters"):
     val (warmupKey, sampleKey) = Key(2).split2()
     val adapted = NUTS.adapt(latent, warmupKey, latent.init)
     val chain = adapted.sample(sampleKey, 2000)
-    val (draws, infos) = (chain.positions, chain.infos)
-    val (narrowMean, narrowVar) = moments(draws.map(_(Narrow).item))
-    val (wideMean, wideVar) = moments(draws.map(_(Wide).item))
+    val (samples, infos) = (chain.samples, chain.infos)
+    val (narrowMean, narrowVar) = moments(samples.map(_.narrow.item))
+    val (wideMean, wideVar) = moments(samples.map(_.wide.item))
     assertEqualsFloat(narrowMean, 1f, 0.02f)
     assertEqualsFloat(narrowVar, 0.01f, 0.002f)
     assertEqualsFloat(wideMean, -5f, 2f)
@@ -57,7 +58,7 @@ class NUTSSuite extends munit.FunSuite:
   test("a dense mass matrix can be adapted"):
     val adapted = NUTS.adapt(latent, Key(3), latent.init, dense = true)
     assert(adapted.inverseMassMatrix.isInstanceOf[InverseMassMatrix.Dense[?]])
-    val draws = adapted.sample(Key(4), 1000)(Narrow).map(_.item)
+    val draws = adapted.sample(Key(4), 1000).samples.map(_.narrow.item)
     assertEqualsFloat(moments(draws)._1, 1f, 0.03f)
 
   test("a given diagonal mass matrix is used by the sampler"):
@@ -75,8 +76,9 @@ class NUTSSuite extends munit.FunSuite:
     val compiled = nuts.sample(Key(6), latent.init, 30)
     assertEquals(compiled.size, 30)
     for ((p1, i1), (p2, i2)) <- looped.zip(compiled.draws) do
-      assertEqualsFloat(p1(Narrow).item, p2(Narrow).item, 1e-4f)
-      assertEqualsFloat(p1(Wide).item, p2(Wide).item, 1e-3f)
+      val (r1, r2) = (latent.result(p1), latent.result(p2))
+      assertEqualsFloat(r1.narrow.item, r2.narrow.item, 1e-4f)
+      assertEqualsFloat(r1.wide.item, r2.wide.item, 1e-3f)
       assertEquals(i1.numIntegrationSteps, i2.numIntegrationSteps)
 
   // starting positions spread out around the target
@@ -97,7 +99,7 @@ class NUTSSuite extends munit.FunSuite:
     val nuts = NUTS(latent, 0.1)
     val chains = inFutures(Key(7).split(3).zip(starts(3)))((k, s) => nuts.sample(k, s, 50))
     assertEquals(chains.map(_.size), Seq(50, 50, 50))
-    val firsts = chains.map(_(Wide).head.item)
+    val firsts = chains.map(_.samples.head.wide.item)
     assertEquals(firsts.distinct.size, 3, s"chains start alike: $firsts")
 
   test("chains in Futures give the same draws as chains run one after another"):
@@ -106,8 +108,9 @@ class NUTSSuite extends munit.FunSuite:
     val parallel = inFutures(inputs)(chain)
     val sequential = inputs.map(chain)
     for (p, q) <- parallel.flatMap(_.draws).zip(sequential.flatMap(_.draws)) do
-      assertEqualsFloat(p._1(Narrow).item, q._1(Narrow).item, 1e-6f)
-      assertEqualsFloat(p._1(Wide).item, q._1(Wide).item, 1e-5f)
+      val (r1, r2) = (latent.result(p._1), latent.result(q._1))
+      assertEqualsFloat(r1.narrow.item, r2.narrow.item, 1e-6f)
+      assertEqualsFloat(r1.wide.item, r2.wide.item, 1e-5f)
 
   test("adapted chains are tuned each on its own, and agree"):
     val runs = inFutures(Key(9).split(4).zip(starts(4)))(adaptedChain(1000))
@@ -115,12 +118,13 @@ class NUTSSuite extends munit.FunSuite:
     assertEquals(stepSizes.distinct.size, 4, s"step sizes $stepSizes")
     val chains = runs.map(_._2)
     assertEquals(chains.map(_.size), Seq(1000, 1000, 1000, 1000))
-    for site <- Seq(Narrow, Wide) do
-      val rhat = Diagnostics.rhat(chains, site).item
-      val ess = Diagnostics.ess(chains, site).item
-      assert(rhat < 1.02, s"rhat of ${site.name}: $rhat")
-      assert(ess > 1000, s"ess of ${site.name}: $ess")
-    val (narrowMean, narrowVar) = moments(chains.flatMap(_(Narrow)).map(_.item))
+    val samples = chains.map(_.samples)
+    for (name, draws) <- Seq("narrow" -> samples.map(_.map(_.narrow)), "wide" -> samples.map(_.map(_.wide))) do
+      val rhat = Diagnostics.rhat(draws).item
+      val ess = Diagnostics.ess(draws).item
+      assert(rhat < 1.02, s"rhat of $name: $rhat")
+      assert(ess > 1000, s"ess of $name: $ess")
+    val (narrowMean, narrowVar) = moments(samples.flatten.map(_.narrow.item))
     assertEqualsFloat(narrowMean, 1f, 0.02f)
     assertEqualsFloat(narrowVar, 0.01f, 0.002f)
     assertEquals(chains.map(_.numDivergent).sum, 0)
@@ -128,7 +132,7 @@ class NUTSSuite extends munit.FunSuite:
   test("adapted chains work with a dense mass matrix"):
     val runs = inFutures(Key(10).split(2).zip(starts(2)))(adaptedChain(500, dense = true))
     assert(runs.forall(_._1.inverseMassMatrix.isInstanceOf[InverseMassMatrix.Dense[?]]))
-    val narrow = runs.flatMap(_._2(Narrow)).map(_.item)
+    val narrow = runs.flatMap(_._2.samples).map(_.narrow.item)
     assertEqualsFloat(moments(narrow)._1, 1f, 0.03f)
 
   test("the chains of a latent share the compiled warmup and sampling loop"):
@@ -137,7 +141,7 @@ class NUTSSuite extends munit.FunSuite:
     def chain(key: Key, start: fresh.Params) =
       val (warmupKey, sampleKey) = key.split2()
       val adapted = NUTS.adapt(fresh, warmupKey, start, numSteps = 200)
-      (adapted.stepSize, adapted.sample(sampleKey, 50)(Wide).last.item)
+      (adapted.stepSize, adapted.sample(sampleKey, 50).samples.last.wide.item)
     val t0 = System.nanoTime()
     val first = chain(Key(12), fresh.init)
     val t1 = System.nanoTime()

@@ -46,11 +46,11 @@ class LKJSuite extends munit.FunSuite:
     val (warmupKey, sampleKey) = Key(7).split2()
     val adapted =
       inference.NUTS.adapt(latent, warmupKey, latent.init, numSteps = 500)
-    val (draws, infos) = adapted.sample(sampleKey, 1000).draws.unzip
-    assertEquals(infos.count(_.isDivergent), 0)
+    val chain = adapted.sample(sampleKey, 1000)
+    assertEquals(chain.numDivergent, 0)
     val a = eta - 1 + d / 2f
     trait Draw derives Label
-    val stacked = stack(draws.map(_(Corr)), Axis[Draw])
+    val stacked = stack(chain.samples, Axis[Draw])
     val means = stacked.mean(Axis[Draw])
     val variances = (stacked -! means).pow(2f).mean(Axis[Draw])
     for (i, j) <- Seq((1, 0), (2, 0), (2, 1)) do

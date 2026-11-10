@@ -164,7 +164,7 @@ object Mixture:
     * `Latent` reads off their distributions (Dirichlet, LogNormal). `mu` is
     * ordered, which its Normal prior does not say, so it needs a constraint.
     */
-  def latent(y: Tensor1[Data, Float32], k: Int): Latent =
+  def latent(y: Tensor1[Data, Float32], k: Int) =
     Latent.discover(transform(Mu.withBijector(Bijector.ordered[Comp]))(observed(y, k)))
 
   /** Draw parameters from their priors and simulate `n` points from a
@@ -222,14 +222,16 @@ object Mixture:
     val (warmupKey, sampleKey) = Key(3L).split2()
     val adapted = NUTS.adapt(posterior, warmupKey, start, numSteps = 500)
     println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
-    val (samples, infos) = adapted.sample(sampleKey, 1000).draws.unzip
+    val chain = adapted.sample(sampleKey, 1000)
     println(
-      f"NUTS divergences: ${infos.count(_.isDivergent)} / ${samples.size}"
+      f"NUTS divergences: ${chain.numDivergent} / ${chain.size}"
     )
+    // the model's result at each draw
+    val samples = chain.samples
 
     trait Draw derives Label
-    def postMean(site: Site[Tensor1[Comp, Float32]]) =
-      stack(samples.map(_(site)), Axis[Draw]).mean(Axis[Draw])
-    println(s"theta: ${postMean(Theta)}   (true ${params.theta})")
-    println(s"mu:    ${postMean(Mu)}   (true ${params.mu})")
-    println(s"sigma: ${postMean(Sigma)}   (true ${params.sigma})")
+    def postMean(values: Seq[Tensor1[Comp, Float32]]) =
+      stack(values, Axis[Draw]).mean(Axis[Draw])
+    println(s"theta: ${postMean(samples.map(_.theta))}   (true ${params.theta})")
+    println(s"mu:    ${postMean(samples.map(_.mu))}   (true ${params.mu})")
+    println(s"sigma: ${postMean(samples.map(_.sigma))}   (true ${params.sigma})")

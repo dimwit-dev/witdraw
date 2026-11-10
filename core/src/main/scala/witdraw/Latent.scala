@@ -10,25 +10,30 @@ import dimwit.tensortree.{TensorTree, TreeOf}
   */
 trait LatentDim derives Label
 
-/** The latent sites of a model, found by tracing one forward run, and a
-  * parameter type for them.
+/** The latent sites of a model, found by tracing one forward run, with two
+  * types:
+  *
+  *   - `latent.Params`, where inference moves: the unconstrained values of all
+  *     latent sites, in one vector, e.g. a starting value or a draw of NUTS;
+  *   - `latent.Result`, what is read: the model's own result, e.g. a named
+  *     tuple, at given parameters.
   *
   * {{{
-  * val latent = Latent.discover:
-  *   observe(Y := yData)(model(x))
+  * def model(using ProbContext) =
+  *   val sigma = Sigma ~ HalfNormal(0f, 1f)
+  *   val y = Y ~ Normal.isotropic(mu, sigma)
+  *   (sigma = sigma, y = y)
   *
-  * val nuts = NUTS[latent.Params](stepSize = 0.05)(latent.logDensity)
-  * val draws = nuts.iterate(key, latent.init).drop(500).take(2000).map(_._1).toList
-  * draws.map(_(Sigma))   // List[Sigma.Value], always positive
+  * val latent = Latent.discover(observe(Y := yData)(model))
+  * val chain = NUTS.adapt(latent, warmupKey, latent.init).sample(key, 1000)
+  * chain.samples.map(_.sigma)     // always positive
+  * latent.result(latent.init).sigma
   * }}}
-  *
-  * `latent.Params` holds the unconstrained values of all latent sites in one
-  * vector, which is what inference algorithms move around in; `params(site)`
-  * returns the value of a site in the model's own space.
   */
-final class Latent private (
+sealed abstract class Latent private (
     model: ProbProg[Any],
-    slots: Vector[Latent.Slot[?]]
+    slots: Vector[Latent.Slot[?]],
+    resultTree: TensorTree[?]
 ):
   import Latent.{Flat, Slot, traceOf}
 
@@ -44,33 +49,31 @@ final class Latent private (
   private[witdraw] def cached(key: String)(make: => AnyRef): AnyRef =
     caches.getOrElseUpdate(key, make)
 
+  /** What the model returns, e.g. a named tuple of tensors: what is read at
+    * given parameters, with [[result]], or at the draws of a chain, with
+    * [[inference.Chain.samples]].
+    */
+  type Result
+
   /** Values for the latent sites of the model: their unconstrained values, in
-    * one vector.
+    * one vector. This is where inference algorithms move, e.g. a starting
+    * value or a draw, not something to read: [[result]] gives the model's
+    * result at them.
     */
   opaque type Params = Tensor1[LatentDim, Float32]
 
   object Params:
     given TensorTree[Params] = TensorTree.tensor[Tuple1[LatentDim], Float32]
     given TreeOf[Params, Float32] = TreeOf.tensor[Tuple1[LatentDim], Float32]
-    given SiteReader[Params] = values(_)
-
-    extension (params: Params)
-      /** The value of `site`, in the model's own (constrained) space.
-        *
-        * For a site whose support depends on other sites, e.g.
-        * `X ~ Uniform(0, sigma)`, this runs the model. To read several such
-        * sites, [[values]] runs it only once.
-        */
-      def apply[T <: Tuple, V](site: SiteDef[T, V]): Tensor[T, V] =
-        values(params)(site)
+    given ModelResult[Params, Result] = result(_)
 
   /** The latent sites, in the order in which the model samples them. */
   def sites: Seq[SiteDef[?, ?]] = slots.map(_.site)
 
-  /** The values of the latent sites at `params`, in the model's own space, e.g.
-    * for a [[Component]] to read them as a typed record.
+  /** The values of the latent sites at `params`, in the model's own space, by
+    * site, e.g. for tests of the bijectors. Users read [[result]] instead.
     */
-  def values(params: Params): SiteValues =
+  private[witdraw] def values(params: Params): SiteValues =
     // one run of the model, for the sites whose bijector depends on others
     lazy val run = traceOf(substitute(params)(model))
     new SiteValues:
@@ -79,6 +82,35 @@ final class Latent private (
           .fixedValueIn(params)
           .getOrElse(run(site))
           .asInstanceOf[Tensor[T, V]]
+
+  /** The model's result at `params`: the model run with the latent sites set
+    * to their values at `params`, and the observed sites to their data. The
+    * same type as a forward run of the model, e.g. a prior sample, so prior
+    * and posterior samples are read the same way. Nothing is drawn.
+    */
+  def result(params: Params): Result =
+    if compileFailed then eagerResult(params)
+    else
+      try compiledResult(params)
+      catch
+        case scala.util.control.NonFatal(_) =>
+          compileFailed = true
+          System.err.println(
+            "witdraw: the model's result cannot be compiled, e.g. as the model calls `.item` on a sampled value, so it runs eagerly, which is slower."
+          )
+          eagerResult(params)
+
+  private def eagerResult(params: Flat): Result =
+    ForwardSampler.run(Random.Key(0))(substitute(params)(model)).asInstanceOf[Result]
+
+  /** [[result]], compiled once. Compiling fails for a model that needs
+    * concrete values, e.g. calls `.item` on a sampled value; then the model
+    * runs eagerly.
+    */
+  private lazy val compiledResult: Params => Result =
+    jit(eagerResult)(using summon[TensorTree[Flat]], resultTree.asInstanceOf[TensorTree[Result]])
+
+  @volatile private var compileFailed = false
 
   /** Starting values for inference: the values of the traced run. */
   def init: Params = initWith()
@@ -147,7 +179,7 @@ final class Latent private (
     val (modelLogDensity, logJacobian) = score(params)
     modelLogDensity + logJacobian
 
-  /** The log-density of the model, observed on the values `params(site)`.
+  /** The log-density of the model, observed on the sites' values at `params`.
     * Maximise this one to find the posterior mode: unlike [[logDensity]], its
     * maximum does not depend on the transforms.
     */
@@ -226,16 +258,20 @@ object Latent:
     *   transform(Mu.withBijector(Bijector.ordered[Comp])):
     *     observe(Y := y)(model(x))
     * }}}
+    *
+    * The model must return a tensor tree, e.g. a named tuple of tensors: its
+    * result is a sample of the posterior, see [[Latent.result]]. The result is
+    * compiled, so reading the samples of a chain is fast.
     */
-  def discover(model: ProbProg[Any]): Latent =
+  def discover[A](model: ProbProg[A])(using resultTree: TensorTree[A]): Latent { type Result = A } =
     val tr = traceOf(model)
     // A second run, with other values, only to make reading values fast. A
     // site whose support is the same in both runs, e.g. HalfNormal(0, 1), does
-    // not depend on other sites, so `params(site)` computes its value directly.
+    // not depend on other sites, so `values(params)` computes its value directly.
     // A site whose support changes, e.g. Uniform(0, sigma), needs a run of the
     // model to read its value, as only that run knows the current sigma.
     // Sampling does not use this: `substitute` builds every bijector from the
-    // support of the current run. Without the second run, `params(site)` would
+    // support of the current run. Without the second run, `values(params)` would
     // have to run the model for every site, e.g. 5000 runs to summarise 5
     // sites over 1000 draws.
     lazy val otherRun = traceOf(model, Random.Key(1))
@@ -258,7 +294,8 @@ object Latent:
       val offset = acc.lastOption.fold(0)(s => s.offset + s.size)
       val entry = tr.entry(site).get.asInstanceOf[TraceEntry[Tuple, Float32]]
       acc :+ slotFor(entry, otherRun.entry(site), offset)
-    new Latent(model, slots)
+    new Latent(model, slots, resultTree):
+      type Result = A
 
   private type Flat = Tensor1[LatentDim, Float32]
 
@@ -286,7 +323,7 @@ object Latent:
     // another run with other values (see `discover`). A custom support cannot
     // be compared, as its bijector is a new object in every run, so it is read
     // through the model. `fixed` only speeds up reading: if it were wrong,
-    // `params(site)` would show a wrong value, but sampling would still be
+    // `values(params)` would show a wrong value, but sampling would still be
     // right, as it never uses `fixed`.
     def supportIsFixed = entry.support match
       case _: Support.Custom[?, ?, ?, ?] => false

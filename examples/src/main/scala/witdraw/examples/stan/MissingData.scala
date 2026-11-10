@@ -159,24 +159,26 @@ object MissingData:
     println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
 
     trait Sample derives Label
-    val (samples, infos) = adapted.sample(sampleKey, 1500).draws.unzip
+    val chain = adapted.sample(sampleKey, 1500)
 
     println(
-      f"NUTS divergences: ${infos.count(_.isDivergent)} / ${samples.length}"
+      f"NUTS divergences: ${chain.numDivergent} / ${chain.size}"
     )
+    // the model's result at each draw
+    val samples = chain.samples
 
-    def postMean(site: Site[Tensor0[Float32]]): Float =
-      stack(samples.map(_(site)), Axis[Sample]).mean.item
+    def postMean(values: Seq[Tensor0[Float32]]): Float =
+      stack(values, Axis[Sample]).mean.item
 
-    println(f"alpha : ${postMean(Alpha)}%6.3f   (true $alphaTrue)")
-    println(f"beta  : ${postMean(Beta)}%6.3f   (true $betaTrue)")
-    println(f"sigma : ${postMean(Sigma)}%6.3f   (true $sigmaTrue)")
-    println(f"muX   : ${postMean(MuX)}%6.3f   (true $muXTrue)")
-    println(f"sigmaX: ${postMean(SigmaX)}%6.3f   (true $sigmaXTrue)")
+    println(f"alpha : ${postMean(samples.map(_.alpha))}%6.3f   (true $alphaTrue)")
+    println(f"beta  : ${postMean(samples.map(_.beta))}%6.3f   (true $betaTrue)")
+    println(f"sigma : ${postMean(samples.map(_.sigma))}%6.3f   (true $sigmaTrue)")
+    println(f"muX   : ${postMean(samples.map(_.muX))}%6.3f   (true $muXTrue)")
+    println(f"sigmaX: ${postMean(samples.map(_.sigmaX))}%6.3f   (true $sigmaXTrue)")
 
     // how well were the 20 hidden predictor values recovered?
     val xMisPost: Tensor1[Missing, Float32] =
-      stack(samples.map(_(XMis)), Axis[Sample]).mean(Axis[Sample])
+      stack(samples.map(_.xMis), Axis[Sample]).mean(Axis[Sample])
     val rmse = (xMisPost - xMisTrue).pow(Tensor0(2f)).mean.sqrt.item
     println(
       f"imputed x  RMSE vs truth: $rmse%.3f  " +
