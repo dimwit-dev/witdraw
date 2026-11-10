@@ -213,13 +213,13 @@ latent.sites.map(_.name)
 // res3: Seq[String] = Vector("Alpha", "Beta", "Sigma")
 ```
 
-A latent has two types made for this model. `latent.Params` is where
-inference moves: one unconstrained value per latent site, in one vector.
-`latent.Result` is what we read: the model's own result, the same named tuple
-as the prior predictive draws above, and `latent.result(params)` gives it at
-given parameters. `latent.logDensity` is the log-density as a function of
-`latent.Params`, and `latent.init` is a starting point for inference: the
-values of the traced run.
+`latent.Params` is a parameter type made for this model: one unconstrained
+value per latent site, in one vector, which is where inference moves. We do
+not read it directly: `latent.result(params)` gives what the model returns at
+given parameters, the same named tuple as the prior predictive draws above.
+`latent.logDensity` is the log-density as a function of `latent.Params`, and
+`latent.init` is a starting point for inference: the values of the traced
+run.
 
 Handlers nest like any other block, and each one sees every random variable
 that is sampled inside its block. To compute `logDensity`, `Latent` wraps the
@@ -287,7 +287,7 @@ val (sigmaMean, sigmaSd) = summary(samples.map(_.sigma))
 
 ```scala
 println(s"alpha: mean $alphaMean, sd $alphaSd   (true $alphaTrue)")
-// alpha: mean 0.40361282, sd 0.069461726   (true 0.5)
+// alpha: mean 0.40361282, sd 0.06946172   (true 0.5)
 println(s"beta:  mean $betaMean, sd $betaSd   (true $betaTrue)")
 // beta:  mean [-1.412222  2.04343 ], sd [0.07319704 0.07117827]   (true [-1.5  2. ])
 println(s"sigma: mean $sigmaMean, sd $sigmaSd   (true $sigmaTrue)")
@@ -585,7 +585,7 @@ val lsLatent = Latent.discover:
     outcome(xData)
 // lsLatent: Latent {
   type Result >: NamedTuple[Tuple2["y", "values"], Tuple2[Tensor[Tuple1[Sample], Float32], Values]] <: NamedTuple[Tuple2["y", "values"], Tuple2[Tensor[Tuple1[Sample], Float32], Values]]
-} = witdraw.Latent$$anon$4@14ae8947
+} = witdraw.Latent$$anon$4@4fc58ec
 
 lsLatent.sites.map(_.name)
 // res10: Seq[String] = Vector(
