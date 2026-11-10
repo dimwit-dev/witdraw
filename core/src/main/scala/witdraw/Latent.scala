@@ -10,13 +10,13 @@ import dimwit.tensortree.{TensorTree, TreeOf}
   */
 trait LatentDim derives Label
 
-/** The latent sites of a model, found by tracing one forward run, with two
-  * types:
+/** The latent sites of a model, found by tracing one forward run.
   *
-  *   - `latent.Params`, where inference moves: the unconstrained values of all
-  *     latent sites, in one vector, e.g. a starting value or a draw of NUTS;
-  *   - `latent.Result`, what is read: the model's own result, e.g. a named
-  *     tuple, at given parameters.
+  * Inference moves in `latent.Params`: the unconstrained values of all latent
+  * sites, in one vector, e.g. a starting value or a draw of NUTS. What you
+  * read is what the model returns: `latent.result(params)` at given
+  * parameters, and `chain.samples` at every draw of a chain, the same type as
+  * a forward run of the model.
   *
   * {{{
   * def model(using ProbContext) =
@@ -40,8 +40,8 @@ sealed abstract class Latent private (
   private val bySite: Map[SiteDef[?, ?], Slot[?]] =
     slots.map(s => s.site -> s).toMap
 
-  /** What inference algorithms keep for this latent, e.g. compiled
-    * functions, so that later calls, e.g. for further chains, reuse them.
+  /** What inference algorithms keep for this latent, e.g. compiled functions,
+    * so that later calls, e.g. for further chains, reuse them.
     */
   private val caches = scala.collection.concurrent.TrieMap.empty[String, AnyRef]
 
@@ -49,16 +49,19 @@ sealed abstract class Latent private (
   private[witdraw] def cached(key: String)(make: => AnyRef): AnyRef =
     caches.getOrElseUpdate(key, make)
 
-  /** What the model returns, e.g. a named tuple of tensors: what is read at
-    * given parameters, with [[result]], or at the draws of a chain, with
-    * [[inference.Chain.samples]].
+  /** The type of what the model returns, e.g. a named tuple of tensors. It is
+    * inferred from the model, so it only needs a name where it is written
+    * down, e.g. `(r: latent.Result) => r.sigma`.
+    *
+    * A function that returns a latent keeps it only if its result type is
+    * inferred: declared as plain `Latent`, the result's fields are lost.
     */
   type Result
 
   /** Values for the latent sites of the model: their unconstrained values, in
-    * one vector. This is where inference algorithms move, e.g. a starting
-    * value or a draw, not something to read: [[result]] gives the model's
-    * result at them.
+    * one vector. This is where inference algorithms move, e.g. a starting value
+    * or a draw, not something to read: [[result]] gives the model's result at
+    * them.
     */
   opaque type Params = Tensor1[LatentDim, Float32]
 
@@ -83,10 +86,10 @@ sealed abstract class Latent private (
           .getOrElse(run(site))
           .asInstanceOf[Tensor[T, V]]
 
-  /** The model's result at `params`: the model run with the latent sites set
-    * to their values at `params`, and the observed sites to their data. The
-    * same type as a forward run of the model, e.g. a prior sample, so prior
-    * and posterior samples are read the same way. Nothing is drawn.
+  /** The model's result at `params`: the model run with the latent sites set to
+    * their values at `params`, and the observed sites to their data. The same
+    * type as a forward run of the model, e.g. a prior sample, so prior and
+    * posterior samples are read the same way. Nothing is drawn.
     */
   def result(params: Params): Result =
     if compileFailed then eagerResult(params)
@@ -101,14 +104,19 @@ sealed abstract class Latent private (
           eagerResult(params)
 
   private def eagerResult(params: Flat): Result =
-    ForwardSampler.run(Random.Key(0))(substitute(params)(model)).asInstanceOf[Result]
+    ForwardSampler
+      .run(Random.Key(0))(substitute(params)(model))
+      .asInstanceOf[Result]
 
-  /** [[result]], compiled once. Compiling fails for a model that needs
-    * concrete values, e.g. calls `.item` on a sampled value; then the model
-    * runs eagerly.
+  /** [[result]], compiled once. Compiling fails for a model that needs concrete
+    * values, e.g. calls `.item` on a sampled value; then the model runs
+    * eagerly.
     */
   private lazy val compiledResult: Params => Result =
-    jit(eagerResult)(using summon[TensorTree[Flat]], resultTree.asInstanceOf[TensorTree[Result]])
+    jit(eagerResult)(using
+      summon[TensorTree[Flat]],
+      resultTree.asInstanceOf[TensorTree[Result]]
+    )
 
   @volatile private var compileFailed = false
 
@@ -122,9 +130,8 @@ sealed abstract class Latent private (
     * Every value must lie inside its support, or the values of its bijector,
     * e.g. be positive for a `HalfNormal` site or increasing for
     * `Bijector.ordered`. A traced value can lie outside when a bijector chosen
-    * with [[transform]] is stricter than the model, or
-    * when given values move the support of another site, and then that site
-    * needs a given value too.
+    * with [[transform]] is stricter than the model, or when given values move
+    * the support of another site, and then that site needs a given value too.
     */
   def initWith(values: Observation[?, ?]*): Params =
     val givenValues: Map[SiteDef[?, ?], Tensor[?, ?]] =
@@ -199,8 +206,8 @@ sealed abstract class Latent private (
   /** Runs `model` with the latent sites observed on their values at `params`.
     *
     * The value of a site is computed when the model samples it, through the
-    * bijector for the support of that statement, so a support may depend on
-    * the values of the sites before it, e.g. `X ~ Uniform(0, sigma)`.
+    * bijector for the support of that statement, so a support may depend on the
+    * values of the sites before it, e.g. `X ~ Uniform(0, sigma)`.
     * `addLogJacobian` receives the log-Jacobian of every bijector.
     */
   private def substitute[A](
@@ -263,7 +270,9 @@ object Latent:
     * result is a sample of the posterior, see [[Latent.result]]. The result is
     * compiled, so reading the samples of a chain is fast.
     */
-  def discover[A](model: ProbProg[A])(using resultTree: TensorTree[A]): Latent { type Result = A } =
+  def discover[A](model: ProbProg[A])(using resultTree: TensorTree[A]): Latent {
+    type Result = A
+  } =
     val tr = traceOf(model)
     // A second run, with other values, only to make reading values fast. A
     // site whose support is the same in both runs, e.g. HalfNormal(0, 1), does
@@ -381,9 +390,9 @@ object Latent:
     *   the bijector chosen with [[transform]], used in every run
     * @param fixed
     *   the bijector, if it is the same for all values of the other sites: the
-    *   chosen one, or the one of a support that does not depend on them.
-    *   Then the site's value can be read without running the model. Only
-    *   reading uses it, sampling never does.
+    *   chosen one, or the one of a support that does not depend on them. Then
+    *   the site's value can be read without running the model. Only reading
+    *   uses it, sampling never does.
     * @param flatten
     *   the unconstrained value of a bijector to its part
     * @param unflatten

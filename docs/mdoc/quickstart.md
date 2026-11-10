@@ -202,13 +202,13 @@ val latent = Latent.discover:
 latent.sites.map(_.name)
 ```
 
-A latent has two types made for this model. `latent.Params` is where
-inference moves: one unconstrained value per latent site, in one vector.
-`latent.Result` is what we read: the model's own result, the same named tuple
-as the prior predictive draws above, and `latent.result(params)` gives it at
-given parameters. `latent.logDensity` is the log-density as a function of
-`latent.Params`, and `latent.init` is a starting point for inference: the
-values of the traced run.
+`latent.Params` is a parameter type made for this model: one unconstrained
+value per latent site, in one vector, which is where inference moves. We do
+not read it directly: `latent.result(params)` gives what the model returns at
+given parameters, the same named tuple as the prior predictive draws above.
+`latent.logDensity` is the log-density as a function of `latent.Params`, and
+`latent.init` is a starting point for inference: the values of the traced
+run.
 
 Handlers nest like any other block, and each one sees every random variable
 that is sampled inside its block. To compute `logDensity`, `Latent` wraps the
