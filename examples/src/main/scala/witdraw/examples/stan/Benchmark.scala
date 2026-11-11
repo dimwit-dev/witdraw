@@ -140,10 +140,8 @@ object Benchmark:
         val k = data("K").num.toInt
         val y = Tensor1(Axis[Data]).fromArray(floats(data("y")))
         val l = latent(y, k)
-        // mu must start inside its ordered constraint
-        val muStart = Array.tabulate(k)(i => i.toFloat - (k - 1) / 2f)
         bench(l, t0)(
-          l.initWith(Mu := Tensor1(Axis[Comp] -> k).fromArray(muStart)),
+          l.init,
           vector[l.Result]("theta", k)(_.theta.toArray) ++
             vector[l.Result]("mu", k)(_.mu.toArray) ++
             vector[l.Result]("sigma", k)(_.sigma.toArray)

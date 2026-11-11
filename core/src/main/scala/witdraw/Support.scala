@@ -4,7 +4,9 @@ import dimwit.*
 import dimwit.stats.*
 import dimwit.tensor.Labels
 
-/** The values a distribution can take.
+/** The values a distribution can take. [[SupportOf]] gives the support of a
+  * distribution, and [[Latent]] samples a latent site through the
+  * [[Bijector]] of its support, e.g. on the log scale for [[GreaterThan]].
   */
 enum Support[T <: Tuple, V]:
 
@@ -20,6 +22,11 @@ enum Support[T <: Tuple, V]:
 
   /** Vectors along `L` with positive entries that sum to one. */
   case Simplex[L, V]()(using val label: Label[L]) extends Support[Tuple1[L], V]
+
+  /** Strictly increasing vectors along `L`, e.g. the values of
+    * [[witdraw.distributions.Ordered]].
+    */
+  case Ordered[L, V]()(using val label: Label[L]) extends Support[Tuple1[L], V]
 
   /** Correlation matrices: symmetric, positive definite, ones on the diagonal.
     */
@@ -51,8 +58,7 @@ enum Support[T <: Tuple, V]:
   case Discrete[T <: Tuple, V]() extends Support[T, V]
 
   /** No [[SupportOf]] instance was found, e.g. because the distribution was
-    * passed around as a plain `Distribution`. A latent site with an unknown
-    * support needs a bijector from [[transform]].
+    * passed around as a plain `Distribution`. Such a site cannot be latent.
     */
   case Unknown[T <: Tuple, V]() extends Support[T, V]
 
@@ -85,6 +91,9 @@ object Support:
       case s: Simplex[l, Float32] @unchecked =>
         given Label[l] = s.label
         Some(BijectorTo(Bijector.simplexStickBreaking[Unconstrained, l]))
+      case s: Ordered[l, Float32] @unchecked =>
+        given Label[l] = s.label
+        Some(BijectorTo(Bijector.ordered[l]))
       case s: CorrelationMatrix[l, Float32] @unchecked =>
         given Label[l] = s.label
         Some(BijectorTo(Bijector.correlationMatrix[Unconstrained, l]))

@@ -16,8 +16,9 @@ import dimwit.tensortree.{TensorTree, TreeOf}
   *
   * The search starts from the traced values, or from the given ones, e.g.
   * `MAP(latent, start = Seq(Sigma := Tensor0(1f)))`. It moves in the
-  * unconstrained space, so it stays inside the constraints, and it maximises
-  * [[Latent.modelLogDensity]], so the result does not depend on them.
+  * unconstrained space, so it stays inside the supports, and it maximises
+  * [[Latent.modelLogDensity]], so the result does not depend on the
+  * bijectors.
   */
 object MAP:
   def apply(

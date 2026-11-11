@@ -3,6 +3,7 @@ package witdraw.examples.stan
 import dimwit.*
 import dimwit.stats.*
 import witdraw.*
+import witdraw.distributions.Ordered
 import witdraw.inference.NUTS
 
 /** Univariate Gaussian mixture with `K` components, ported from the Stan
@@ -37,11 +38,9 @@ import witdraw.inference.NUTS
   *
   * Stan has no explicit prior on `theta`, so it gets the implicit uniform
   * (`Dirichlet(1,...,1)`) prior over the simplex. `sigma ~ lognormal(0, 2)` is
-  * a small [[LogNormal]] defined here (dimwit has no built-in). The `ordered`
-  * constraint on `mu` is an identifiability device against label switching; it
-  * is a constrained-parameterisation concern for the sampler, so at the model
-  * level `mu` just carries its `normal(0, 10)` prior, and the constraint is
-  * given to the sampler in [[latent]].
+  * a small [[LogNormal]] defined here (dimwit has no built-in). `mu` is
+  * ordered, which makes the components identifiable (no label switching): it
+  * is `k` draws from `normal(0, 10)`, sorted, i.e. [[Ordered]].
   */
 object Mixture:
 
@@ -136,10 +135,7 @@ object Mixture:
 
   private def samplePriors(k: Int)(using ProbContext): MixtureParams =
     val theta = Theta ~ Dirichlet(Tensor1(Axis[Comp] -> k).fill(1f))
-    val mu = Mu ~ Normal(
-      Tensor1(Axis[Comp] -> k).fill(0f),
-      Tensor1(Axis[Comp] -> k).fill(10f)
-    )
+    val mu = Mu ~ Ordered(Normal(0f, 10f), Axis[Comp] -> k)
     val sigma = Sigma ~ LogNormal(
       Tensor1(Axis[Comp] -> k).fill(0f),
       Tensor1(Axis[Comp] -> k).fill(2f)
@@ -159,13 +155,13 @@ object Mixture:
   def observed(y: Tensor1[Data, Float32], k: Int)(using ProbContext) =
     observe(Y := y)(model(k, y.shape(Axis[Data])))
 
-  /** The latent sites of the model observed on `y`, with the constraints of the
-    * Stan model. `theta` lies on the simplex and `sigma` is positive, which
-    * `Latent` reads off their distributions (Dirichlet, LogNormal). `mu` is
-    * ordered, which its Normal prior does not say, so it needs a constraint.
+  /** The latent sites of the model observed on `y`. `Latent` reads the
+    * constraints of the Stan model off the distributions: `theta` on the
+    * simplex (Dirichlet), `sigma` positive (LogNormal), `mu` increasing
+    * (Ordered).
     */
   def latent(y: Tensor1[Data, Float32], k: Int) =
-    Latent.discover(transform(Mu.withBijector(Bijector.ordered[Comp]))(observed(y, k)))
+    Latent.discover(observed(y, k))
 
   /** Draw parameters from their priors and simulate `n` points from a
     * `k`-component mixture.
@@ -212,15 +208,9 @@ object Mixture:
       f"joint log-density (marginal + priors) at the true parameters = ${posterior.modelLogDensity(atTruth).item}%.3f"
     )
 
-    // The prior Normal(0, 10) does not order mu, so the traced draw of mu is
-    // usually outside the ordered constraint: start mu from ordered values.
-    val start = posterior.initWith(
-      Mu := Tensor1(Axis[Comp] -> 2).fromArray(Array(-1f, 1f))
-    )
-
     // The warmup tunes the step size and the mass matrix.
     val (warmupKey, sampleKey) = Key(3L).split2()
-    val adapted = NUTS.adapt(posterior, warmupKey, start, numSteps = 500)
+    val adapted = NUTS.adapt(posterior, warmupKey, posterior.init, numSteps = 500)
     println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
     val chain = adapted.sample(sampleKey, 1000)
     println(

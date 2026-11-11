@@ -3,11 +3,16 @@ package witdraw
 import dimwit.*
 import dimwit.linalg.LinearAlgebra
 import dimwit.tensor.Labels
+import dimwit.tensortree.TensorTree
 
 /** A differentiable bijection between an unconstrained value `z` and a value
   * `x` in a constrained space, with the log-determinant of its Jacobian.
-  * [[transform]] chooses one for a site, e.g.
-  * `transform(Mu.withBijector(Bijector.ordered[Comp]))(model)`.
+  *
+  * A bijector is how inference reaches a [[Support]]: [[Latent]] samples every
+  * latent site in `z` and gives the model `forward(z)`, which lies in the
+  * support of the site's distribution. Each support has its bijector, e.g.
+  * `exp` for positive values. To give a distribution of your own a support
+  * that witdraw does not know, write one for a [[Support.Custom]].
   *
   * Inference moves in `z`, so the density of `z` is
   * `logDensity(forward(z)) + logDetJac(z)`, see [[Latent.logDensity]].
@@ -240,3 +245,25 @@ object Bijector:
         stack(zs, zAxis)
 
       def logDetJac(z: Tensor1[LZ, Float32]) = cholesky(z)._2
+
+/** A bijector to values `Tensor[T, V]`, from an unconstrained type `Z` that it
+  * hides, together with what [[Latent]] needs to flatten `Z` into its parameter
+  * vector.
+  */
+private[witdraw] sealed abstract class BijectorTo[T <: Tuple, V]:
+  type Z
+  def bijector: Bijector[Z, Tensor[T, V]]
+  def zTree: TensorTree[Z]
+
+private[witdraw] object BijectorTo:
+  def apply[TZ <: Tuple: Labels, VZ, T <: Tuple, V](
+      b: Bijector[Tensor[TZ, VZ], Tensor[T, V]]
+  ): BijectorTo[T, V] =
+    new BijectorTo[T, V]:
+      type Z = Tensor[TZ, VZ]
+      def bijector = b
+      def zTree = TensorTree.tensor[TZ, VZ]
+
+  /** No change of variables: inference moves in the site's own space. */
+  def identity[T <: Tuple: Labels, V]: BijectorTo[T, V] =
+    BijectorTo(Bijector.identity[T, V])

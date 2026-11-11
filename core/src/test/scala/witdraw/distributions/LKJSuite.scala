@@ -38,11 +38,9 @@ class LKJSuite extends munit.FunSuite:
     // the marginal of each correlation r is (r + 1)/2 ~ Beta(a, a), with
     // a = η - 1 + d/2, so E[r] = 0 and Var[r] = 1 / (2a + 1)
     object Corr extends Site[Tensor2[D, Prime[D], Float32]]
-    trait DZ derives Label
     val (eta, d) = (2f, 3)
     val latent = Latent.discover:
-      transform(Corr.withBijector(Bijector.correlationMatrix[DZ, D])):
-        Corr ~ lkj(eta, d)
+      Corr ~ lkj(eta, d)
     val (warmupKey, sampleKey) = Key(7).split2()
     val adapted =
       inference.NUTS.adapt(latent, warmupKey, latent.init, numSteps = 500)

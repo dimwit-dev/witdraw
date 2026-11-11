@@ -3,6 +3,7 @@ package witdraw
 import dimwit.*
 import dimwit.stats.*
 import dimwit.tensortree.TensorTree
+import witdraw.distributions.Ordered
 
 import NormalModel.*
 
@@ -11,8 +12,7 @@ class LatentSuite extends munit.FunSuite:
   override def beforeAll(): Unit = dimwit.initialize()
 
   lazy val latent = Latent.discover:
-    transform(Sigma.withBijector(Bijector.exp)):
-      observe(Y := yData)(model)
+    observe(Y := yData)(model)
 
   test("Latent finds the latent sites and starts from the traced values"):
     assertEquals(latent.sites, Seq(Mu, Sigma))
@@ -77,35 +77,22 @@ class LatentSuite extends munit.FunSuite:
     assertEquals(eager.result(p).positive.item, 1f)
     assertEquals(eager.result(eager.initWith(Mu := Tensor0(-0.5f))).positive.item, 0f)
 
-  test("Latent errors: unknown site, bijector on observed site"):
+  test("a site that is not latent is an error"):
     intercept[NoSuchElementException](latent.initWith(Y := yData))
-    intercept[IllegalArgumentException]:
-      Latent.discover:
-        transform(Y.withBijector(Bijector.exp[Tuple1[Sample]])):
-          observe(Y := yData)(model)
 
   trait Comp derives Label
-  trait CompZ derives Label
   object Weights extends Site[Tensor1[Comp, Float32]]
   object Locs extends Site[Tensor1[Comp, Float32]]
 
   def mixturePrior(using ProbContext) =
     (
       weights = Weights ~ Dirichlet(Tensor1(Axis[Comp] -> 3).fill(1f)),
-      locs = Locs ~ Normal(
-        Tensor1(Axis[Comp] -> 3).fill(0f),
-        Tensor1(Axis[Comp] -> 3).fill(10f)
-      )
+      locs = Locs ~ Ordered(Normal(0f, 10f), Axis[Comp] -> 3)
     )
 
-  final lazy val mixture = Latent.discover:
-    transform(
-      Weights.withBijector(Bijector.simplexStickBreaking[CompZ, Comp]),
-      Locs.withBijector(Bijector.ordered[Comp])
-    ):
-      mixturePrior
+  final lazy val mixture = Latent.discover(mixturePrior)
 
-  test("a constraint may change the shape: simplex from K-1 coordinates"):
+  test("a bijector may change the shape: simplex from K-1 coordinates"):
     val weights = Tensor1(Axis[Comp]).fromArray(Array(0.2f, 0.5f, 0.3f))
     val locs = Tensor1(Axis[Comp]).fromArray(Array(-1f, 0f, 2f))
     val p = mixture.initWith(Weights := weights, Locs := locs)
@@ -125,17 +112,7 @@ class LatentSuite extends munit.FunSuite:
       .toList
     assertEquals(leafSizes, List(5))
 
-  test("initRandom works when the traced value lies outside its constraint"):
-    // the traced value is about -10, which the exp constraint cannot reach
-    object Neg extends Site[Tensor0[Float32]]
-    val constrained = Latent.discover:
-      transform(Neg.withBijector(Bijector.exp)):
-        Neg ~ Normal(-10f, 0.1f)
-    intercept[IllegalArgumentException](constrained.init)
-    val start = constrained.initRandom(Key(3))
-    assert(constrained.result(start).item > 0f)
-
-  test("a start value outside its constraint is an error, with a hint"):
+  test("a start value outside its support is an error, with a hint"):
     val unordered = Tensor1(Axis[Comp]).fromArray(Array(1f, -1f, 0f))
     val e =
       intercept[IllegalArgumentException](mixture.initWith(Locs := unordered))

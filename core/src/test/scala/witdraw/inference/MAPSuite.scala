@@ -13,12 +13,11 @@ class MAPSuite extends munit.FunSuite:
 
   // p ~ Uniform(0, 1), with 6 successes in 9 trials, on the logit scale
   lazy val latent = Latent.discover:
-    transform(P.withBijector(Bijector.interval(Tensor0(0f), Tensor0(1f)))):
-      observe(Successes := Tensor0(6)):
-        val p = P ~ Uniform(0f, 1f)
-        (p = p, successes = Successes ~ Binomial(9, Prob(p)))
+    observe(Successes := Tensor0(6)):
+      val p = P ~ Uniform(0f, 1f)
+      (p = p, successes = Successes ~ Binomial(9, Prob(p)))
 
-  test("MAP maximises the model's density, whatever the constraint"):
+  test("MAP maximises the model's density, not the one on the logit scale"):
     // the MAP is 6/9; with the Jacobian of the logit scale, it would be 7/11
     assertEqualsFloat(latent.result(MAP(latent)).p.item, 6f / 9f, 1e-3f)
 

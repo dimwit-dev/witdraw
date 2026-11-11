@@ -10,7 +10,6 @@ import witdraw.Latent
 import witdraw.ProbContext
 import witdraw.Site
 import witdraw.observe
-import witdraw.Bijector
 import witdraw.inference.NUTS
 import plotwit.PlotTargets.desktopBrowser
 import plotwit.{display, grid}

@@ -39,7 +39,7 @@ object LaplaceState:
 object Laplace:
   /** The Laplace approximation of the posterior of `latent`. It approximates
     * [[Latent.logDensity]], so it lives in the unconstrained space and every
-    * draw lies inside the constraints. `init` searches the mode from the
+    * draw lies inside the supports. `init` searches the mode from the
     * starting point it is given.
     */
   def apply(
