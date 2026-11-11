@@ -74,10 +74,10 @@ sealed abstract class Latent private (
   def sites: Seq[SiteDef[?, ?]] = slots.map(_.site)
 
   /** The values of the latent sites at `params`, in the model's own space, by
-    * site, e.g. for tests of the bijectors. Users read [[result]] instead.
+    * site, e.g. for tests of the supports. Users read [[result]] instead.
     */
   private[witdraw] def values(params: Params): SiteValues =
-    // one run of the model, for the sites whose bijector depends on others
+    // one run of the model, for the sites whose support depends on others
     lazy val run = traceOf(substitute(params)(model))
     new SiteValues:
       def apply[T <: Tuple, V](site: SiteDef[T, V]): Tensor[T, V] =
@@ -127,18 +127,18 @@ sealed abstract class Latent private (
     * `latent.initWith(Sigma := Tensor0(1f))`, and the values of the traced run
     * for the others.
     *
-    * Every value must lie inside its support, or the values of its bijector,
-    * e.g. be positive for a `HalfNormal` site or increasing for
-    * `Bijector.ordered`. A traced value can lie outside when a bijector chosen
-    * with [[transform]] is stricter than the model, or when given values move
-    * the support of another site, and then that site needs a given value too.
+    * Every value must lie inside its support, e.g. be positive for a
+    * `HalfNormal` site or increasing for an `Ordered` one. A traced value can
+    * lie outside when given values move the support of another site, e.g.
+    * `X ~ Uniform(0, sigma)` with a smaller given sigma, and then that site
+    * needs a given value too.
     */
   def initWith(values: Observation[?, ?]*): Params =
     val givenValues: Map[SiteDef[?, ?], Tensor[?, ?]] =
       values.map(o => slotOf(o.site).site -> o.value).toMap
     def startValue(slot: Slot[?]): Tensor[?, ?] =
       givenValues.getOrElse(slot.site, slot.traced)
-    // the supports at the starting values, for the sites whose bijector
+    // the supports at the starting values, for the sites whose support
     // depends on others
     lazy val atStart =
       val start = slots.map(slot => slot.observation(startValue(slot)))
@@ -158,7 +158,7 @@ sealed abstract class Latent private (
       val name = slot.site.name
       val origin = if givenValues.contains(slot.site) then "given" else "traced"
       throw IllegalArgumentException(
-        s"The $origin value of '$name' lies outside its support or bijector ($name = ${startValue(slot)}). " +
+        s"The $origin value of '$name' lies outside its support ($name = ${startValue(slot)}). " +
           s"Give a starting value inside it with latent.initWith($name := ...)."
       )
     concatenate(parts, Axis[LatentDim])
@@ -171,8 +171,7 @@ sealed abstract class Latent private (
     * `key.split(4).map(latent.initRandom(_))`.
     */
   def initRandom(key: Random.Key, radius: Float = 2f): Params =
-    // the size from the slots: `init` fails when a traced value lies outside
-    // the values of its bijector, which random values need not care about
+    // the size from the slots, without running the model
     val shape = Shape(Axis[LatentDim] -> slots.map(_.size).sum)
     dimwit.stats
       .Uniform(Tensor(shape).fill(-radius), Tensor(shape).fill(radius))
@@ -180,7 +179,7 @@ sealed abstract class Latent private (
 
   /** The log-density to sample from, e.g. with NUTS: the density of the
     * unconstrained values, which is [[modelLogDensity]] plus the log-Jacobian
-    * of the transforms.
+    * of the bijectors.
     */
   def logDensity(params: Params): Tensor0[Float32] =
     val (modelLogDensity, logJacobian) = score(params)
@@ -188,12 +187,12 @@ sealed abstract class Latent private (
 
   /** The log-density of the model, observed on the sites' values at `params`.
     * Maximise this one to find the posterior mode: unlike [[logDensity]], its
-    * maximum does not depend on the transforms.
+    * maximum does not depend on the bijectors.
     */
   def modelLogDensity(params: Params): Tensor0[Float32] = score(params)._1
 
   /** The log-density of the model at `params`, and the log-Jacobian of the
-    * transforms, from one run of the model.
+    * bijectors, from one run of the model.
     */
   private def score(params: Flat): (Tensor0[Float32], Tensor0[Float32]) =
     var logJacobian = Tensor0(0f)
@@ -253,18 +252,14 @@ object Latent:
     * The parameters are meant for gradient-based inference, so every latent
     * site must be continuous (`Float32`); a discrete latent site is an error.
     *
-    * Each latent site is sampled through the bijector that matches the
-    * [[Support]] of its distribution, e.g. on the log scale for `HalfNormal` or
-    * by stick-breaking for `Dirichlet`. The bijector is built anew in every run
-    * of the model, so a support may depend on other sites, e.g.
-    * `X ~ Uniform(0, sigma)`. [[transform]] chooses the bijector of some sites
-    * instead, e.g. `transform(Mu.withBijector(Bijector.ordered[Comp]))`. A
-    * latent site whose support is unknown needs one.
-    * {{{
-    * val latent = Latent.discover:
-    *   transform(Mu.withBijector(Bijector.ordered[Comp])):
-    *     observe(Y := y)(model(x))
-    * }}}
+    * Each latent site is sampled through the [[Bijector]] of the [[Support]]
+    * of its distribution, e.g. on the log scale for `HalfNormal`, by
+    * stick-breaking for `Dirichlet`, or as increasing values for `Ordered`.
+    * The bijector is built anew in every run of the model, so a support may
+    * depend on other sites, e.g. `X ~ Uniform(0, sigma)`. Increasing values
+    * come from the distribution `Ordered`, e.g.
+    * `Mu ~ Ordered(Normal(0f, 10f), Axis[Comp] -> k)`. A latent site whose
+    * support is unknown is an error.
     *
     * The model must return a tensor tree, e.g. a named tuple of tensors: its
     * result is a sample of the posterior, see [[Latent.result]]. The result is
@@ -285,13 +280,7 @@ object Latent:
     // sites over 1000 draws.
     lazy val otherRun = traceOf(model, Random.Key(1))
     val latentSites = tr.latentSites
-    def names = latentSites.map(_.name).mkString(", ")
 
-    for e <- tr.entries if e.observed && e.bijector.isDefined do
-      throw IllegalArgumentException(
-        s"Site '${e.site.name}' is given a bijector by transform, but is observed. " +
-          s"Only latent sites are sampled through a bijector. Latent sites: $names."
-      )
     for site <- latentSites if tr(site).dtype != DType.Float32 do
       throw IllegalArgumentException(
         s"Site '${site.name}' is ${tr(site).dtype}, but latent sites must be continuous (Float32). " +
@@ -323,21 +312,19 @@ object Latent:
       other: => Option[TraceEntry[?, ?]],
       offset: Int
   ): Slot[T] =
-    // the bijector chosen with transform, which is the same in every run
-    val chosen = entry.bijector
-    val t = chosen.getOrElse(defaultBijector(entry))
+    val t = bijectorOf(entry)
     // `fixed`: the bijector when it is the same for all values of the other
     // sites, so that the site's value can be read without running the model.
-    // That holds for a chosen bijector, and for a support that is the same in
-    // another run with other values (see `discover`). A custom support cannot
-    // be compared, as its bijector is a new object in every run, so it is read
-    // through the model. `fixed` only speeds up reading: if it were wrong,
-    // `values(params)` would show a wrong value, but sampling would still be
-    // right, as it never uses `fixed`.
+    // That holds for a support that is the same in another run with other
+    // values (see `discover`). A custom support cannot be compared, as its
+    // bijector is a new object in every run, so it is read through the model.
+    // `fixed` only speeds up reading: if it were wrong, `values(params)` would
+    // show a wrong value, but sampling would still be right, as it never uses
+    // `fixed`.
     def supportIsFixed = entry.support match
       case _: Support.Custom[?, ?, ?, ?] => false
       case support                       => other.exists(_.support == support)
-    val fixed = chosen.orElse(Option.when(supportIsFixed)(t))
+    val fixed = Option.when(supportIsFixed)(t)
 
     given TensorTree[t.Z] = t.zTree
     val z = t.bijector.inverse(entry.value)
@@ -349,14 +336,13 @@ object Latent:
       initial.shape.size,
       entry.value,
       initial,
-      chosen,
       fixed,
       ravel.flatten.asInstanceOf[Any => Flat],
       ravel.unflatten
     )
 
   /** The bijector for the support of a latent site, traced as `entry`. */
-  private def defaultBijector[T <: Tuple](
+  private def bijectorOf[T <: Tuple](
       entry: TraceEntry[T, Float32]
   ): BijectorTo[T, Float32] =
     val name = entry.site.name
@@ -368,14 +354,16 @@ object Latent:
           case Support.Unknown() =>
             throw IllegalArgumentException(
               s"Site '$name' is latent, but the support of its distribution " +
-                s"($distribution) is unknown, e.g. because it was typed as a plain Distribution. " +
-                s"Give it a bijector, e.g. transform($name.withBijector(Bijector.exp))(model) for positive values, " +
-                "keep the distribution's own type at `~`, or give its class a `given SupportOf`."
+                s"($distribution) is unknown. The support is looked up for the static type of the " +
+                "distribution where `~` is written, so it is unknown when that type is a plain " +
+                "Distribution, or a type parameter of a helper. Keep the distribution's own type at `~`, " +
+                "pass the support into a helper with `(using SupportOf[D, T, V])`, or give the " +
+                "distribution's class a `given SupportOf`."
             )
           case support =>
             throw IllegalArgumentException(
               s"Site '$name' is latent, and witdraw has no bijector for the support $support of its distribution " +
-                s"($distribution). Give it a bijector with transform, or give the distribution a Support.Custom with its own bijector."
+                s"($distribution). Give the distribution a Support.Custom with its own bijector."
             )
 
   /** The part `[offset, offset + size)` of the parameter vector that holds the
@@ -386,13 +374,10 @@ object Latent:
     *   the site's value in the traced run
     * @param initial
     *   the part for the traced value
-    * @param chosen
-    *   the bijector chosen with [[transform]], used in every run
     * @param fixed
-    *   the bijector, if it is the same for all values of the other sites: the
-    *   chosen one, or the one of a support that does not depend on them. Then
-    *   the site's value can be read without running the model. Only reading
-    *   uses it, sampling never does.
+    *   the bijector, if its support does not depend on the values of the other
+    *   sites. Then the site's value can be read without running the model.
+    *   Only reading uses it, sampling never does.
     * @param flatten
     *   the unconstrained value of a bijector to its part
     * @param unflatten
@@ -404,7 +389,6 @@ object Latent:
       val size: Int,
       val traced: Tensor[T, Float32],
       val initial: Flat,
-      chosen: Option[BijectorTo[T, Float32]],
       val fixed: Option[BijectorTo[T, Float32]],
       flatten: Any => Flat,
       unflatten: Flat => Any
@@ -412,19 +396,16 @@ object Latent:
     def part(params: Flat): Flat =
       params.select(Axis[LatentDim].at(offset until offset + size))
 
-    /** The bijector for a statement of this site with the given support: the
-      * chosen one, or the one of the support.
-      */
+    /** The bijector for a statement of this site with the given support. */
     def bijectorFor(support: Support[?, ?]): BijectorTo[T, Float32] =
-      chosen.getOrElse:
-        val s = support.asInstanceOf[Support[T, Float32]]
-        Support
-          .bijectorFor(s)(using site.labels)
-          .getOrElse(
-            throw IllegalStateException(
-              s"No bijector for the support $s of '${site.name}'."
-            )
+      val s = support.asInstanceOf[Support[T, Float32]]
+      Support
+        .bijectorFor(s)(using site.labels)
+        .getOrElse(
+          throw IllegalStateException(
+            s"No bijector for the support $s of '${site.name}'."
           )
+        )
 
     /** The value for the unconstrained part `z`, and `log |det J|` at `z`. */
     def forward(

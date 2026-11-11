@@ -34,16 +34,12 @@ trait ProbContext:
   *
   * @param support
   *   the [[Support]] of the distribution
-  * @param bijector
-  *   the bijector to sample the site through, if [[transform]] has chosen
-  *   one, instead of the one of its support
   */
 case class SampleStatement[T <: Tuple, V](
     site: SiteDef[T, V],
     distribution: Distribution[T, V],
     support: Support[T, V],
-    observed: Option[Tensor[T, V]],
-    private[witdraw] val bijector: Option[BijectorTo[T, V]] = None
+    observed: Option[Tensor[T, V]]
 )
 
 /** The error for a model that samples `site` more than once, which makes

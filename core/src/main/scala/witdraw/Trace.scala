@@ -10,8 +10,7 @@ case class TraceEntry[T <: Tuple, V](
     distribution: Distribution[T, V],
     value: Tensor[T, V],
     observed: Boolean,
-    support: Support[T, V],
-    private[witdraw] val bijector: Option[BijectorTo[T, V]] = None
+    support: Support[T, V]
 ):
 
   /** The log-density of the value under the site's distribution. */
@@ -81,8 +80,7 @@ def withTrace[A](model: ProbProg[A])(using outer: ProbContext): (A, Trace) =
           statement.distribution,
           value,
           observed = statement.observed.isDefined,
-          statement.support,
-          statement.bijector
+          statement.support
         )
         value
   )

@@ -83,12 +83,7 @@ class ComponentSuite extends munit.FunSuite:
 
   test("sites of components work with observe and Latent"):
     val latent = Latent.discover:
-      transform(
-        tv.Effect.withBijector(Bijector.exp),
-        radio.Effect.withBijector(Bijector.exp),
-        Noise.withBijector(Bijector.exp)
-      ):
-        observe(Y := yData)(model)
+      observe(Y := yData)(model)
     assertEquals(latent.sites, Seq(tv.Effect, radio.Effect, Noise))
     val p = latent.initWith(
       tv.Effect := Tensor0(2f),
@@ -122,12 +117,7 @@ class ComponentSuite extends munit.FunSuite:
 
   test("a component returns its values as a typed record, in the posterior"):
     val latent = Latent.discover:
-      transform(
-        tv.Effect.withBijector(Bijector.exp),
-        radio.Effect.withBijector(Bijector.exp),
-        Noise.withBijector(Bijector.exp)
-      ):
-        observe(Y := yData)(model)
+      observe(Y := yData)(model)
     // the record also gives the observations, e.g. for a starting point
     val p = latent.initWith(media.observations(mediaValues(2f, 0.5f, 1.5f))*)
     val v = latent.result(p).values

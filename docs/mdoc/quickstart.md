@@ -193,9 +193,8 @@ that are not observed:
 
 ```scala mdoc:silent
 val latent = Latent.discover:
-  transform(Sigma.withBijector(Bijector.exp)):
-    observe(Y := yData):
-      model(xData)
+  observe(Y := yData):
+    model(xData)
 ```
 
 ```scala mdoc
@@ -216,18 +215,18 @@ model in one more `observe` that fixes the latent sites to the given
 parameters, so `ModelScorer` finds every site observed and adds up their
 log-densities.
 
-### Handling the constraint on sigma
+### How sigma stays positive
 
 NUTS moves freely through all of $\mathbb{R}^n$, but $\sigma$ must be positive.
 If we sampled $\sigma$ directly, the sampler would sooner or later try
 negative values, where the model's density is undefined. The standard fix is
 to sample $z = \log \sigma$ instead, which can be any real number.
 
-A `Bijector` describes such a change of variables, and
-`transform(Sigma.withBijector(Bijector.exp))` above applies one to `Sigma`.
-Positive distributions such as `HalfCauchy` get a bijector like this by
-default; `transform` chooses one explicitly, or another one. The sampler
-then moves in unconstrained space, and `latent.logDensity` includes the
+Every distribution has a *support*, the values it can take, and each support
+comes with a `Bijector`, a change of variables from unconstrained values to
+the support. `HalfCauchy` takes
+positive values, so `Latent` samples `Sigma` through $\sigma = e^z$. The
+sampler then moves in unconstrained space, and `latent.logDensity` includes the
 Jacobian correction for the change of variables. We never see $z$ ourselves:
 `latent.result(params).sigma` always gives $\sigma = e^z$.
 
@@ -517,8 +516,8 @@ val lsLatent = Latent.discover:
 lsLatent.sites.map(_.name)
 ```
 
-No constraint is needed: the scale is positive through `exp`, so all
-parameters can take any real value.
+All parameters can take any real value: the scale is positive through
+`exp`.
 
 ### Values as a typed record
 

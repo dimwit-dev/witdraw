@@ -3,7 +3,7 @@ package witdraw
 import dimwit.*
 import dimwit.stats.*
 import dimwit.tensortree.TensorTree
-import witdraw.distributions.LKJ
+import witdraw.distributions.{LKJ, Ordered}
 
 import NormalModel.*
 
@@ -93,7 +93,7 @@ class SupportSuite extends munit.FunSuite:
         .isInstanceOf[Support.GreaterThan[?, ?]]
     )
 
-  test("without constraints, a HalfNormal site is sampled on the log scale"):
+  test("a HalfNormal site is sampled on the log scale"):
     val latent = Latent.discover(observe(Y := yData)(model))
     val p = latent.initWith(Mu := Tensor0(0.3f), Sigma := Tensor0(1.5f))
     assertEqualsFloat(latent.result(p).sigma.item, 1.5f, 1e-5f)
@@ -123,22 +123,18 @@ class SupportSuite extends munit.FunSuite:
 
   def mixturePrior(using ProbContext) =
     val weights = Weights ~ Dirichlet(Tensor1(Axis[Comp] -> 3).fill(1f))
-    val locs = Locs ~ Normal(
-      Tensor1(Axis[Comp] -> 3).fill(0f),
-      Tensor1(Axis[Comp] -> 3).fill(10f)
-    )
+    val locs = Locs ~ Ordered(Normal(0f, 10f), Axis[Comp] -> 3)
     (weights = weights, locs = locs)
 
-  test("a Dirichlet site is a simplex, and a constraint overrides a default"):
-    val latent =
-      Latent.discover(transform(Locs.withBijector(Bijector.ordered[Comp]))(mixturePrior))
+  test("a Dirichlet site is a simplex, an Ordered site is increasing"):
+    val latent = Latent.discover(mixturePrior)
     val weights = Tensor1(Axis[Comp]).fromArray(Array(0.2f, 0.5f, 0.3f))
     val locs = Tensor1(Axis[Comp]).fromArray(Array(-1f, 0f, 2f))
     val p = latent.initWith(Weights := weights, Locs := locs)
     assertEqualsFloat(latent.result(p).weights.sum.item, 1f, 1e-5f)
     // K-1 = 2 coordinates for the simplex, 3 for the locations
     assertEquals(numParams(latent)(p), 5)
-    // ordered: an unordered start is outside the constraint
+    // ordered: an unordered start is outside the support
     intercept[IllegalArgumentException]:
       latent.initWith(Locs := Tensor1(Axis[Comp]).fromArray(Array(1f, 0f, 2f)))
 
@@ -158,15 +154,14 @@ class SupportSuite extends munit.FunSuite:
         1e-5f
       )
 
-  test("a latent site with an unknown support needs a bijector"):
+  test("a latent site with an unknown support is an error"):
     def widenedModel(using ProbContext) =
       val widened: Distribution[EmptyTuple, Float32] = HalfNormal(0f, 1f)
       Sigma ~ widened
     val e = intercept[IllegalArgumentException](Latent.discover(widenedModel))
     assert(e.getMessage.contains("'Sigma' is latent"), e.getMessage)
-    assert(e.getMessage.contains("transform(Sigma.withBijector"), e.getMessage)
-    // with a bijector, or observed, the unknown support does not matter
-    Latent.discover(transform(Sigma.withBijector(Bijector.exp))(widenedModel))
+    assert(e.getMessage.contains("given SupportOf"), e.getMessage)
+    // observed, the unknown support does not matter
     ModelScorer.run(observe(Sigma := Tensor0(1f))(widenedModel))
 
   object X extends Site[Tensor0[Float32]]

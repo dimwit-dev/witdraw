@@ -3,6 +3,7 @@ package witdraw.examples.stan
 import dimwit.*
 import dimwit.stats.*
 import witdraw.*
+import witdraw.distributions.Ordered
 import witdraw.inference.NUTS
 
 /** Three-state Hidden Markov Model with Gaussian emissions, ported from the
@@ -49,7 +50,8 @@ import witdraw.inference.NUTS
   *
   * `mu` is ordered, which makes the states identifiable: otherwise the model
   * is the same for every order of the states, and different chains settle on
-  * different orders (label switching).
+  * different orders (label switching). It is three draws from `normal(0, 1)`,
+  * sorted, i.e. [[Ordered]].
   */
 object HMM:
 
@@ -174,10 +176,7 @@ object HMM:
   // -- the model ------------------------------------------------------
 
   private def samplePriors(using ProbContext): HMMParams =
-    val mu = Mu ~ Normal(
-      Tensor1(Axis[State] -> nStates).fill(0f),
-      Tensor1(Axis[State] -> nStates).fill(1f)
-    )
+    val mu = Mu ~ Ordered(Normal(0f, 1f), Axis[State] -> nStates)
     val sigma = Sigma ~ HalfNormal(Tensor0(0f), Tensor0(1f))
     val rho = Rho ~ Dirichlet(Tensor1(Axis[State] -> nStates).fill(1f))
     val gamma = Gamma ~ RowwiseUniformSimplex()
@@ -197,14 +196,13 @@ object HMM:
   def observed(y: Tensor1[Time, Float32])(using ProbContext) =
     observe(Y := y)(model(y.shape(Axis[Time])))
 
-  /** The latent sites of the model observed on `y`, with the constraints of the
-    * Stan model: `sigma` positive, `rho` and every row of `gamma` on the
-    * simplex, which `Latent` reads off the distributions (HalfNormal,
-    * Dirichlet, RowwiseUniformSimplex), and `mu` ordered, which its Normal
-    * prior does not say, so it needs a constraint.
+  /** The latent sites of the model observed on `y`. `Latent` reads the
+    * constraints of the Stan model off the distributions: `mu` increasing
+    * (Ordered), `sigma` positive (HalfNormal), `rho` and every row of `gamma`
+    * on the simplex (Dirichlet, RowwiseUniformSimplex).
     */
   def latent(y: Tensor1[Time, Float32]) =
-    Latent.discover(transform(Mu.withBijector(Bijector.ordered[State]))(observed(y)))
+    Latent.discover(observed(y))
 
   /** Draw parameters from their priors and simulate a length-`n` sequence. */
   def generate(n: Int)(
@@ -258,9 +256,8 @@ object HMM:
 
     // The warmup tunes the step size and the mass matrix.
     val (warmupKey, sampleKey) = Key(3L).split2()
-    // the traced mu is usually not ordered: start from random values instead
     val adapted =
-      NUTS.adapt(posterior, warmupKey, posterior.initRandom(Key(2L)), numSteps = 500)
+      NUTS.adapt(posterior, warmupKey, posterior.init, numSteps = 500)
     println(f"NUTS adapted step size: ${adapted.stepSize}%.3f")
     val chain = adapted.sample(sampleKey, 500)
     println(

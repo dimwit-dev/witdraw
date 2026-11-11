@@ -132,8 +132,8 @@ object LocationScale:
     val ys = ForwardSampler.run(ky)(observe(observations(truth)*)(model(x)))
 
     // ---- inference ----------------------------------------------------
-    // All parameters are unconstrained: the scales are positive through the
-    // log link, so no constraint is needed.
+    // All parameters can take any real value: the scales are positive
+    // through the log link.
     val latent = Latent.discover:
       observe(
         bloodPressure.Y := ys.bloodPressure,
