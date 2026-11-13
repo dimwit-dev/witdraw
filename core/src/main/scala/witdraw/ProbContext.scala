@@ -34,12 +34,15 @@ trait ProbContext:
   *
   * @param support
   *   the [[Support]] of the distribution
+  * @param marginalized
+  *   whether a [[marginalize]] handler asks inference to sum the site out
   */
 case class SampleStatement[T <: Tuple, V](
     site: SiteDef[T, V],
     distribution: Distribution[T, V],
     support: Support[T, V],
-    observed: Option[Tensor[T, V]]
+    observed: Option[Tensor[T, V]],
+    marginalized: Boolean = false
 )
 
 /** The error for a model that samples `site` more than once, which makes

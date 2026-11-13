@@ -54,7 +54,21 @@ enum Support[T <: Tuple, V]:
       bijector: Bijector[Tensor[TZ, VZ], Tensor[T, V]]
   )(using val zLabels: Labels[TZ]) extends Support[T, V]
 
-  /** Integer or boolean values. Such a site cannot be latent. */
+  /** The integers from `lo` until `hi`, element-wise, e.g. of a
+    * `DiscreteUniform` or a `Categorical`. Such a site cannot be latent, but
+    * a scalar one can be summed out with [[marginalize]].
+    */
+  case Integers[T <: Tuple, V](lo: Tensor[T, V], hi: Tensor[T, V])
+      extends Support[T, V]
+
+  /** `false` and `true`, e.g. of a `Bernoulli`. Such a site cannot be latent,
+    * but a scalar one can be summed out with [[marginalize]].
+    */
+  case Booleans[T <: Tuple]() extends Support[T, Bool]
+
+  /** Other integer or boolean values, e.g. the counts of a `Poisson`. Such a
+    * site cannot be latent.
+    */
   case Discrete[T <: Tuple, V]() extends Support[T, V]
 
   /** No [[SupportOf]] instance was found, e.g. because the distribution was
@@ -97,7 +111,7 @@ object Support:
       case s: CorrelationMatrix[l, Float32] @unchecked =>
         given Label[l] = s.label
         Some(BijectorTo(Bijector.correlationMatrix[Unconstrained, l]))
-      case Discrete() | Unknown() => None
+      case Integers(_, _) | Discrete() | Unknown() => None
 
   /** A bijector per row, for a [[Rowwise]] support. */
   private def rowwiseBijectorTo[R: Label, L: Label](
@@ -168,14 +182,14 @@ object SupportOf:
     _ => Simplex()
 
   given bernoulli[T <: Tuple]: SupportOf[Bernoulli[T], T, Bool] =
-    _ => Discrete()
+    _ => Booleans()
   given binomial[T <: Tuple, V]: SupportOf[Binomial[T, V], T, V] =
     _ => Discrete()
   given poisson[T <: Tuple, VS, VR]: SupportOf[Poisson[T, VS, VR], T, VS] =
     _ => Discrete()
   given discreteUniform[T <: Tuple]: SupportOf[DiscreteUniform[T], T, Int32] =
-    _ => Discrete()
+    d => Integers(d.min, d.max)
   given categorical[L]: SupportOf[Categorical[L], EmptyTuple, Int32] =
-    _ => Discrete()
+    d => Integers(Tensor0(0), Tensor0(d.probs.shape.dimensions(0)))
   given multinomial[L]: SupportOf[Multinomial[L], Tuple1[L], Int32] =
     _ => Discrete()
