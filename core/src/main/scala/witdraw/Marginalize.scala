@@ -22,7 +22,17 @@ package witdraw
   * the model once for every value, or for every combination of values of
   * several sites.
   *
-  * It is an error to give a site twice, or a site the model never samples.
+  * The mark only asks inference to sum the site out; the model can still be
+  * conditioned on the site from outside, e.g. a component that sums out its
+  * own site, used with that site observed. An observation outside the block
+  * wins: the site is then observed, not summed out.
+  * {{{
+  * observe(SwitchPoint := Tensor0(40)):
+  *   marginalize(SwitchPoint)(model)     // SwitchPoint is observed
+  * }}}
+  *
+  * It is an error to give a site twice, a site the model never samples, or a
+  * site observed inside the block, which contradicts summing it out.
   */
 def marginalize[A](sites: SiteDef[?, ?]*)(model: ProbProg[A])(using
     ProbContext
@@ -30,5 +40,10 @@ def marginalize[A](sites: SiteDef[?, ?]*)(model: ProbProg[A])(using
   intercept("marginalized", "marginalize", sites.map(_ -> ()))(
     [T <: Tuple, V] =>
       (statement: SampleStatement[T, V], _: Unit) =>
+        if statement.observed.isDefined then
+          throw IllegalArgumentException(
+            s"Site '${statement.site.name}' is marginalized, but it is observed inside the marginalize block. " +
+              "Only latent sites can be summed out; to fix its value, observe it outside the block."
+          )
         statement.copy(marginalized = true)
   )(model)

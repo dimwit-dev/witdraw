@@ -335,10 +335,8 @@ object Latent:
     type Result = A
   } =
     val tr = traceOf(model)
-    for e <- tr.entries if e.observed && e.marginalized do
-      throw IllegalArgumentException(
-        s"Site '${e.site.name}' is both observed and marginalized. Only latent sites can be summed out."
-      )
+    // a site observed outside its marginalize block is observed: the
+    // observation is the more specific condition
     val (marginalized, latentSites) =
       tr.latentSites.partition(tr.entry(_).get.marginalized)
 

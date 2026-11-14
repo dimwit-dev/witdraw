@@ -103,9 +103,23 @@ class MarginalizeSuite extends munit.FunSuite:
     assert(zs.forall(z => z >= 0 && z <= 2), zs)
     assert(zs.distinct.size > 1, zs)
 
-  test("summing out an observed site is an error"):
-    intercept[IllegalArgumentException]:
+  test("summing out a site observed inside the block is an error"):
+    val error = intercept[IllegalArgumentException]:
       Latent.discover(marginalize(Z)(observe(X := xs, Z := Tensor0(1))(model)))
+    assert(error.getMessage.contains("observe it outside the block"), error.getMessage)
+
+  test("a site summed out can be observed from outside: then it is observed"):
+    val conditioned = Latent.discover(observe(Z := Tensor0(1))(marginalize(Z)(observe(X := xs)(model))))
+    assertEquals(conditioned.sites.map(_.name), Seq("Mu"))
+    assertEquals(conditioned.marginalizedSites, Seq.empty)
+    val plain = Latent.discover(observe(X := xs, Z := Tensor0(1))(model))
+    val p = conditioned.initWith(Mu := Tensor0(0.4f))
+    assertEqualsDouble(
+      conditioned.logDensity(p).item.toDouble,
+      plain.logDensity(plain.initWith(Mu := Tensor0(0.4f))).item.toDouble,
+      1e-5
+    )
+    assertEquals(conditioned.result(p).z.item, 1)
 
   test("summing out a site whose values cannot be listed is an error"):
     object Count extends Site[Tensor0[Int32]]
