@@ -37,9 +37,12 @@ object ForwardSampler:
   * free site is an error.
   */
 object ModelScorer:
-  def run[A](model: ProbProg[A]): Tensor0[Float32] =
+  def run[A](model: ProbProg[A]): Tensor0[Float32] = runWithResult(model)._2
+
+  /** The model's result, and its log-density. */
+  def runWithResult[A](model: ProbProg[A]): (A, Tensor0[Float32]) =
     var logProb = Tensor0(0f)
-    model(using
+    val result = model(using
       new ProbContext:
         def sample[T <: Tuple, V](
             statement: SampleStatement[T, V]
@@ -51,4 +54,4 @@ object ModelScorer:
           logProb = logProb + statement.distribution.logProb(value).asFloat
           value
     )
-    logProb
+    (result, logProb)
