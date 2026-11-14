@@ -68,14 +68,13 @@ class LatentSuite extends munit.FunSuite:
     assertEquals(chain.samples.map(_.mu.item), starts.map(latent.result(_).mu.item))
     assertEquals(chain.samples.map(_.y.toArray.toSeq).distinct, Seq(yData.toArray.toSeq))
 
-  test("a result that cannot be compiled is computed eagerly"):
+  test("a model that reads a latent value with .item cannot be compiled"):
     // `.item` needs a concrete value, so the model cannot be traced by jit
-    val eager = Latent.discover:
+    val traced = Latent.discover:
       val mu = Mu ~ Normal(0f, 1f)
       (mu = mu, positive = Tensor0(if mu.item > 0 then 1f else 0f))
-    val p = eager.initWith(Mu := Tensor0(0.5f))
-    assertEquals(eager.result(p).positive.item, 1f)
-    assertEquals(eager.result(eager.initWith(Mu := Tensor0(-0.5f))).positive.item, 0f)
+    val e = intercept[Exception](traced.result(traced.initWith(Mu := Tensor0(0.5f))))
+    assert(e.getMessage.contains("Cannot convert a JAX Tracer"), e.getMessage)
 
   test("a site that is not latent is an error"):
     intercept[NoSuchElementException](latent.initWith(Y := yData))

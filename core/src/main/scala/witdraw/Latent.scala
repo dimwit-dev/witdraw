@@ -10,18 +10,9 @@ import witdraw.inference.Chain
   */
 trait LatentDim derives Label
 
-/** The axis along the values of a site summed out with [[marginalize]], e.g.
-  * of [[Latent.valuesOf]] and [[Latent.posteriorOf]].
+/** The log-density of the model, and the log-density with the log-Jacobian of
+  * the bijectors.
   */
-trait Choice derives Label
-
-/** The axis along all combinations of values of the sites summed out with
-  * [[marginalize]]. Users never see it: [[Latent.posteriorOf]] gives the
-  * posterior of one site along [[Choice]].
-  */
-private[witdraw] trait Combination derives Label
-
-/** The log-density of the model, and the log-Jacobian of the bijectors. */
 private trait ScorePart derives Label
 
 /** The draws of a chain, completed at once by [[Latent.recover]]. */
@@ -46,17 +37,21 @@ private trait RecoveredDraw derives Label
   * chain.samples.map(_.sigma)     // always positive
   * latent.result(latent.init).sigma
   * }}}
+  *
+  * The model is interpreted on two latent spaces: the continuous sites, laid
+  * out in the parameters by a [[ParamLayout]], and the sites summed out with
+  * [[marginalize]], whose combinations of values an [[Enumeration]] lists. A
+  * point of both, a parameter vector and a combination, determines every
+  * site. The log-density sums over the combinations; a model with no sites
+  * summed out has a single one.
   */
 sealed abstract class Latent private (
     model: ProbProg[Any],
     layout: ParamLayout,
-    enumeration: Option[Latent.Enumeration],
+    enumeration: Enumeration,
     resultTree: TensorTree[?]
 ):
-  import Latent.{Enumerated, Enumeration, logSumExp, traceOf}
-
-  private val enumeratedBySite: Map[SiteDef[?, ?], Enumerated[?]] =
-    enumeration.fold(Map.empty)(_.sites.map(e => e.site -> e).toMap)
+  import Latent.{logSumExp, stacked, traceOf}
 
   /** What inference algorithms keep for this latent, e.g. compiled functions,
     * so that later calls, e.g. for further chains, reuse them.
@@ -90,8 +85,6 @@ sealed abstract class Latent private (
 
   private given TensorTree[Result] = resultTree.asInstanceOf[TensorTree[Result]]
 
-  private val compiled = Compiled()
-
   /** The latent sites, in the order in which the model samples them, without
     * the ones summed out with [[marginalize]], see [[marginalizedSites]].
     */
@@ -100,14 +93,14 @@ sealed abstract class Latent private (
   /** The sites summed out with [[marginalize]], in the order in which the
     * model samples them.
     */
-  def marginalizedSites: Seq[SiteDef[?, ?]] =
-    enumeration.fold(Seq.empty)(_.sites.map(_.site))
+  def marginalizedSites: Seq[SiteDef[?, ?]] = enumeration.sites.map(_.site)
 
-  /** The model with the sites summed out observed on their values in the
-    * combination `k`, an index along [[Combination]], which may be traced.
+  /** The model with every latent site set: the continuous ones to their values
+    * at `params`, and the ones summed out to their values in the combination
+    * `k`. Returns the model's result and the log-Jacobian of the bijectors.
     */
-  private def conditionedOn(k: Tensor0[Int32]): ProbProg[Any] =
-    observe(enumeration.get.observationsAt(k)*)(model)
+  private def at(params: Flat, k: Tensor0[Int32]): ProbProg[(Any, Tensor0[Float32])] =
+    layout.substitute(params)(enumeration.condition(k)(model))
 
   /** The values of the latent sites at `params`, in the model's own space, by
     * site, e.g. for tests of the supports. Users read [[result]] instead.
@@ -126,24 +119,20 @@ sealed abstract class Latent private (
     * recovered chain.
     */
   def result(params: Params): Result =
-    if enumeration.isDefined then
+    if !enumeration.isTrivial then
       val names = marginalizedSites.map(_.name).mkString(", ")
       throw IllegalStateException(
         s"The parameters do not hold the sites summed out with marginalize ($names), so they do not determine " +
           "the model's result. Draw those sites with latent.recover(chains, key), and read the samples of the " +
           "recovered chains, or get their posterior with latent.posteriorOf(site)(params)."
       )
-    compiledResult(params)
+    compiledResult(params, Tensor0(0))
 
-  /** The model's result at `params`, run with the sites summed out observed as
-    * in `m`. Compiled once; a model that cannot be compiled, e.g. calls `.item`
-    * on a sampled value, runs eagerly.
-    */
-  private def resultIn(m: ProbProg[Any], params: Flat): Result =
-    ForwardSampler.run(Random.Key(0))(layout.substitute(params)(m))._1.asInstanceOf[Result]
-
-  private val compiledResult: Flat => Result =
-    compiled((p: Flat) => resultIn(model, p))
+  /** The model's result at the parameters and a combination, compiled once. */
+  private val compiledResult: (Flat, Tensor0[Int32]) => Result =
+    jit((p: Flat, k: Tensor0[Int32]) =>
+      ForwardSampler.run(Random.Key(0))(at(p, k))._1.asInstanceOf[Result]
+    )
 
   /** A draw of a chain completed by [[recover]]: the parameters, and values of
     * the sites summed out, drawn from their posterior given the parameters.
@@ -159,16 +148,13 @@ sealed abstract class Latent private (
 
   /** The model's result at a completed draw. */
   def resultOf(draw: Draw): Result =
-    compiledResultAt(draw.params, draw.combination)
-
-  private val compiledResultAt: (Flat, Tensor0[Int32]) => Result =
-    compiled((p: Flat, k: Tensor0[Int32]) => resultIn(conditionedOn(k), p))
+    compiledResult(draw.params, draw.combination)
 
   /** The values of `site`, summed out with [[marginalize]], along [[Choice]],
     * e.g. the years of a switchpoint, in the order of [[posteriorOf]].
     */
   def valuesOf[V](site: SiteDef[EmptyTuple, V]): Tensor1[Choice, V] =
-    enumeratedOf(site).values.asInstanceOf[Tensor1[Choice, V]]
+    enumeration.enumeratedOf(site).values.asInstanceOf[Tensor1[Choice, V]]
 
   /** The posterior of `site`, summed out with [[marginalize]], given the other
     * sites at `params`: `p(z | theta, x)`, along the values of [[valuesOf]].
@@ -178,7 +164,7 @@ sealed abstract class Latent private (
   def posteriorOf(site: SiteDef[EmptyTuple, ?])(
       params: Params
   ): Tensor1[Choice, Float32] =
-    val e = enumeratedOf(site)
+    val e = enumeration.enumeratedOf(site)
     compiledLogJoint(params)
       .softmax(Axis[Combination])
       .dot(Axis[Combination])(e.oneHot)
@@ -193,24 +179,11 @@ sealed abstract class Latent private (
       site: SiteDef[EmptyTuple, ?],
       chains: Seq[Chain[Params, ?]]
   ): Tensor1[Choice, Float32] =
-    val e = enumeratedOf(site)
+    val e = enumeration.enumeratedOf(site)
     val draws = chains.flatMap(_.positions)
     require(draws.nonEmpty, "posteriorOf needs at least one draw")
     val probs = compiledBatchLogJoint(stacked(draws)).softmax(Axis[Combination])
     probs.mean(Axis[RecoveredDraw]).dot(Axis[Combination])(e.oneHot)
-
-  /** `stack(draws, Axis[RecoveredDraw])`, but fast for many draws: JAX's
-    * `stack` of thousands of arrays is slow, NumPy's on the host is not.
-    */
-  private def stacked(draws: Seq[Flat]): Tensor2[RecoveredDraw, LatentDim, Float32] =
-    import me.shadaj.scalapy.py
-    import me.shadaj.scalapy.py.SeqConverters
-    val (np, jnp) = (py.module("numpy"), py.module("jax.numpy"))
-    val tree = TensorTree[Flat]
-    val host = draws.map(d => np.asarray(tree.toPyTree(d))).toPythonCopy
-    TensorTree[Tensor2[RecoveredDraw, LatentDim, Float32]].fromPyTree(
-      jnp.asarray(np.stack(host))
-    )
 
   /** The chain with every draw completed: the sites summed out with
     * [[marginalize]] drawn from their posterior `p(z | theta, x)` given the
@@ -225,7 +198,7 @@ sealed abstract class Latent private (
       chains: Seq[Chain[Params, I]],
       key: Random.Key
   ): Seq[Chain[Draw, I]] =
-    if enumeration.isEmpty then
+    if enumeration.isTrivial then
       throw IllegalStateException(
         "The model has no sites summed out with marginalize, so its draws are complete: there is nothing to recover."
       )
@@ -246,40 +219,30 @@ sealed abstract class Latent private (
       val ends = chains.map(_.size).scanLeft(0)(_ + _)
       ends.zip(ends.tail).map((from, until) => Chain(completed.slice(from, until)))
 
-  private def enumeratedOf(site: SiteDef[?, ?]): Enumerated[?] =
-    enumeratedBySite.getOrElse(
-      site,
-      throw java.util.NoSuchElementException(
-        s"Site '${site.name}' is not summed out with marginalize. Sites summed out: ${marginalizedSites.map(_.name).mkString(", ")}"
-      )
-    )
-
   /** `log p(z, theta, x)` for every combination `z` of values of the sites
     * summed out, up to a constant, at the parameters `theta`.
     */
   private val compiledLogJoint: Flat => Tensor1[Combination, Float32] =
-    compiled((p: Flat) => logJoint(p)._1)
+    jit((p: Flat) => logJoint(p)._1)
 
   /** [[compiledLogJoint]] for many parameters at once. */
-  private val compiledBatchLogJoint: Tensor2[RecoveredDraw, LatentDim, Float32] => Tensor2[
-    RecoveredDraw,
-    Combination,
-    Float32
-  ] =
-    compiled((ps: Tensor2[RecoveredDraw, LatentDim, Float32]) =>
+  private val compiledBatchLogJoint
+      : Tensor2[RecoveredDraw, LatentDim, Float32] => Tensor2[RecoveredDraw, Combination, Float32] =
+    jit((ps: Tensor2[RecoveredDraw, LatentDim, Float32]) =>
       ps.vmap(Axis[RecoveredDraw])(p => logJoint(p)._1)
     )
 
   /** For every combination of values of the sites summed out, the log-density
-    * of the model with those values and the log-Jacobian of the bijectors,
-    * from one run of the model each, vectorized.
+    * of the model at `params` with those values, without and with the
+    * log-Jacobian of the bijectors, from one run of the model each,
+    * vectorized.
     */
   private def logJoint(
       params: Flat
   ): (Tensor1[Combination, Float32], Tensor1[Combination, Float32]) =
-    val parts = enumeration.get.combinations.vmap(Axis[Combination]): k =>
-      val (logDensity, logJacobian) = scoreIn(conditionedOn(k), params)
-      stack(Seq(logDensity, logJacobian), Axis[ScorePart])
+    val parts = enumeration.combinations.vmap(Axis[Combination]): k =>
+      val ((_, logJacobian), logDensity) = ModelScorer.runWithResult(at(params, k))
+      stack(Seq(logDensity, logDensity + logJacobian), Axis[ScorePart])
     (
       parts.select(Axis[ScorePart].at(0)),
       parts.select(Axis[ScorePart].at(1))
@@ -325,43 +288,18 @@ sealed abstract class Latent private (
     layout.random(key, radius)
 
   /** The log-density to sample from, e.g. with NUTS: the density of the
-    * unconstrained values, which is [[modelLogDensity]] plus the log-Jacobian
-    * of the bijectors.
+    * unconstrained values, which is the density of the model times the
+    * Jacobian of the bijectors, summed over the combinations of values of the
+    * sites summed out.
     */
-  def logDensity(params: Params): Tensor0[Float32] =
-    val (modelLogDensity, logJacobian) = score(params)
-    modelLogDensity + logJacobian
+  def logDensity(params: Params): Tensor0[Float32] = logSumExp(logJoint(params)._2)
 
-  /** The log-density of the model, observed on the sites' values at `params`.
-    * Maximise this one to find the posterior mode: unlike [[logDensity]], its
-    * maximum does not depend on the bijectors.
+  /** The log-density of the model, observed on the sites' values at `params`,
+    * summed over the combinations of values of the sites summed out. Maximise
+    * this one to find the posterior mode: unlike [[logDensity]], its maximum
+    * does not depend on the bijectors.
     */
-  def modelLogDensity(params: Params): Tensor0[Float32] = score(params)._1
-
-  /** The log-density of the model at `params`, and the log-Jacobian of the
-    * bijectors, from one run of the model, or, with sites summed out, from one
-    * run for every combination of their values: then the log-density is the
-    * log of the sum of the densities, and the log-Jacobian is the one of the
-    * sum of the densities with the Jacobians.
-    */
-  private def score(params: Flat): (Tensor0[Float32], Tensor0[Float32]) =
-    enumeration match
-      case None    => scoreIn(model, params)
-      case Some(_) =>
-        val (logDensities, logJacobians) = logJoint(params)
-        val modelLogDensity = logSumExp(logDensities)
-        (modelLogDensity, logSumExp(logDensities + logJacobians) - modelLogDensity)
-
-  /** The log-density of `m` at `params`, and the log-Jacobian of the bijectors,
-    * from one run.
-    */
-  private def scoreIn(
-      m: ProbProg[Any],
-      params: Flat
-  ): (Tensor0[Float32], Tensor0[Float32]) =
-    val ((_, logJacobian), logDensity) =
-      ModelScorer.runWithResult(layout.substitute(params)(m))
-    (logDensity, logJacobian)
+  def modelLogDensity(params: Params): Tensor0[Float32] = logSumExp(logJoint(params)._1)
 
 object Latent:
 
@@ -388,7 +326,10 @@ object Latent:
     *
     * The model must return a tensor tree, e.g. a named tuple of tensors: its
     * result is a sample of the posterior, see [[Latent.result]]. The result is
-    * compiled, so reading the samples of a chain is fast.
+    * compiled, so reading the samples of a chain is fast. As in all of
+    * inference, the model is traced: it may not read a value that depends on a
+    * latent site with `.item`, but must use tensor operations instead, e.g.
+    * `where` for a branch.
     */
   def discover[A](model: ProbProg[A])(using resultTree: TensorTree[A]): Latent {
     type Result = A
@@ -406,10 +347,11 @@ object Latent:
         s"Site '${site.name}' is ${tr(site).dtype}, but latent sites must be continuous (Float32). " +
           s"Observe it, or sum it out with marginalize(${site.name})."
       )
-    // A second run, with other values, to check that the values of the sites
-    // summed out do not depend on the other sites.
-    val enumeration = Option.when(marginalized.nonEmpty)(
-      enumerationOf(marginalized.map(tr.entry(_).get), traceOf(model, Random.Key(1)))
+    // a second run, with other values, shows whether the values of the sites
+    // summed out depend on the other sites
+    val enumeration = Enumeration.of(
+      marginalized.map(tr.entry(_).get),
+      traceOf(model, Random.Key(1))
     )
     // latent sites are Float32, as checked above
     val layout = ParamLayout.of(
@@ -418,119 +360,26 @@ object Latent:
     new Latent(model, layout, enumeration, resultTree):
       type Result = A
 
-  /** `log(sum(exp(l)))`, shifted by the maximum to avoid overflow. */
+  /** `log(sum(exp(l)))`, shifted by the maximum to avoid overflow. When every
+    * entry is `-inf`, it is `-inf`; for a single entry, it is that entry.
+    */
   private def logSumExp[L: Label](l: Tensor1[L, Float32]): Tensor0[Float32] =
-    val m = l.max
+    val max = l.max
+    val m = where(max.isfinite, max, Tensor0(0f))
     m + (l -! m).exp.sum.log
 
-  /** The most combinations of values of sites summed out. */
-  private val maxCombinations = 1_000_000
-
-  /** The sites summed out, `entries`, traced as in `other` in another run, and
-    * all combinations of their values, the first site varying slowest.
+  /** `stack(draws, Axis[RecoveredDraw])`, but fast for many draws: JAX's
+    * `stack` of thousands of arrays is slow, NumPy's on the host is not.
     */
-  private def enumerationOf(
-      entries: Seq[TraceEntry[?, ?]],
-      other: Trace
-  ): Enumeration =
-    val values = entries.map: e =>
-      val (description, tensor) = valuesOf(e)
-      val otherDescription = other.entry(e.site).map(valuesOf(_)._1)
-      if !otherDescription.contains(description) then
-        throw IllegalArgumentException(
-          s"Site '${e.site.name}' is marginalized, but its values depend on other sites " +
-            s"($description in one run, ${otherDescription.getOrElse("not sampled")} in another). " +
-            "The values of a site summed out must be fixed."
-        )
-      tensor
-    val sizes = values.map(_.shape(Axis[Choice]))
-    val total = sizes.foldLeft(1L)(_ * _)
-    if total > maxCombinations then
-      throw IllegalArgumentException(
-        s"The sites summed out (${entries.map(_.site.name).mkString(", ")}) have $total combinations of values, " +
-          s"more than $maxCombinations: every log-density evaluation would run the model for each of them."
-      )
-    val n = total.toInt
-    val strides = sizes.scanRight(1)(_ * _).tail
-    val enumerated = entries.zip(values).zip(sizes.zip(strides)).map:
-      case ((e, v), (size, stride)) =>
-        val index = Array.tabulate(n)(k => (k / stride) % size)
-        Enumerated(
-          e.site,
-          v,
-          v.select(Axis[Choice].at(Tensor1(Axis[Combination]).fromArray(index))),
-          Tensor2(Axis[Combination], Axis[Choice]).fromArray(
-            Array.tabulate(n, size)((k, j) => if index(k) == j then 1f else 0f)
-          )
-        )
-    Enumeration(enumerated.toVector, n)
-
-  /** The values of a site to sum out, traced as `e`: a description to compare
-    * them between runs, and the values along [[Choice]].
-    */
-  private def valuesOf(e: TraceEntry[?, ?]): (Any, Tensor1[Choice, ?]) =
-    val name = e.site.name
-    if e.value.shape.dimensions.nonEmpty then
-      throw IllegalArgumentException(
-        s"Site '$name' is marginalized, but it is not scalar (shape ${e.value.shape}). Only scalar sites can be summed out."
-      )
-    e.support match
-      case Support.Integers(lo, hi) if e.value.dtype == DType.Int32 =>
-        val (l, h) = (
-          lo.asInstanceOf[Tensor0[Int32]].item,
-          hi.asInstanceOf[Tensor0[Int32]].item
-        )
-        if l >= h then
-          throw IllegalArgumentException(
-            s"Site '$name' is marginalized, but it has no values: the integers from $l until $h."
-          )
-        (s"the integers from $l until $h", Tensor1(Axis[Choice]).fromArray(Array.range(l, h)))
-      case Support.Booleans() =>
-        ("false and true", Tensor1(Axis[Choice]).fromArray(Array(false, true)))
-      case support =>
-        val distribution = e.distribution.getClass.getSimpleName
-        throw IllegalArgumentException(
-          s"Site '$name' is marginalized, but the values of its distribution ($distribution) cannot be listed " +
-            s"(support $support). Sites with a DiscreteUniform, Categorical or Bernoulli distribution can be summed out."
-        )
-
-  /** All combinations of values of the sites summed out, along
-    * [[Combination]].
-    */
-  private final class Enumeration(
-      val sites: Vector[Enumerated[?]],
-      val size: Int
-  ):
-    val combinations: Tensor1[Combination, Int32] =
-      Tensor1(Axis[Combination]).fromArray(Array.range(0, size))
-
-    /** The values of all sites summed out in the combination `k`, which may
-      * be traced, to condition the model on with [[observe]].
-      */
-    def observationsAt(k: Tensor0[Int32]): Seq[Observation[?, ?]] =
-      sites.map(_.observationAt(k))
-
-  /** A site summed out.
-    *
-    * @param values
-    *   its values
-    * @param valuesByCombination
-    *   its value in every combination
-    * @param oneHot
-    *   which of its values each combination has
-    */
-  private final class Enumerated[V](
-      val site: SiteDef[?, ?],
-      val values: Tensor1[Choice, V],
-      valuesByCombination: Tensor1[Combination, V],
-      val oneHot: Tensor2[Combination, Choice, Float32]
-  ):
-    /** Its value in the combination `k`, which may be traced. */
-    def observationAt(k: Tensor0[Int32]): Observation[EmptyTuple, V] =
-      Observation(
-        site.asInstanceOf[SiteDef[EmptyTuple, V]],
-        valuesByCombination.select(Axis[Combination].at(k))
-      )
+  private def stacked(draws: Seq[Flat]): Tensor2[RecoveredDraw, LatentDim, Float32] =
+    import me.shadaj.scalapy.py
+    import me.shadaj.scalapy.py.SeqConverters
+    val (np, jnp) = (py.module("numpy"), py.module("jax.numpy"))
+    val tree = TensorTree[Flat]
+    val host = draws.map(d => np.asarray(tree.toPyTree(d))).toPythonCopy
+    TensorTree[Tensor2[RecoveredDraw, LatentDim, Float32]].fromPyTree(
+      jnp.asarray(np.stack(host))
+    )
 
   /** The trace of a forward run of `model`. When every latent site is filled
     * in, as by `observe` or `substitute`, nothing is drawn, and the key does
