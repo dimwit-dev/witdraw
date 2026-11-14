@@ -234,10 +234,14 @@ object NUTS:
   ): NUTSAdaptation[P] =
     Kernel[P](PyBridge.toPyFn(logDensity)).adapt(key, initial, numSteps, dense, targetAcceptanceRate)
 
+  /** Where a latent keeps its kernel. */
+  private val kernelKey = Latent.CacheKey[Kernel[?]]()
+
   /** The kernel of `latent`, made once and kept with it. */
   private def kernel(latent: Latent): Kernel[latent.Params] =
+    // the key cannot name `latent.Params`, which depends on the latent
     latent
-      .cached("nuts")(Kernel[latent.Params](PyBridge.toPyFn(latent.logDensity)))
+      .cached(kernelKey)(Kernel[latent.Params](PyBridge.toPyFn(latent.logDensity)))
       .asInstanceOf[Kernel[latent.Params]]
 
   /** NUTS for one log-density, with the compiled parts that all its samplers

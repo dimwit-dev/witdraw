@@ -246,8 +246,9 @@ cache, or they take any log-density over any `TensorTree` position.
 All share `SamplingAlgorithm`: an `init` from a position to a state and a
 `step` from a key and state to the next state and an info. `sample` runs
 `numDraws` steps in one compiled `scan`, so `step` must be traceable; `iterate`
-steps one at a time. The compiled loop is kept in the latent's cache, so
-further chains of the same latent reuse it.
+steps one at a time. The compiled kernel is kept with the latent, under a
+typed `CacheKey`, so further chains of the same latent reuse it; it lives as
+long as the latent, whose log-density it refers to.
 
 A `Chain[P, I]` holds `(position, info)` pairs. `chain.samples` maps each
 position to the model's result through a `ModelResult[P, A]` given: for

@@ -53,14 +53,16 @@ sealed abstract class Latent private (
 ):
   import Latent.{logSumExp, stacked, traceOf}
 
-  /** What inference algorithms keep for this latent, e.g. compiled functions,
-    * so that later calls, e.g. for further chains, reuse them.
+  /** What inference algorithms keep for this latent, e.g. compiled kernels,
+    * so that later calls, e.g. for further chains, reuse them. It lives with
+    * the latent, as what it keeps refers to the latent's log-density, and is
+    * dropped with it.
     */
-  private val caches = scala.collection.concurrent.TrieMap.empty[String, AnyRef]
+  private val caches = scala.collection.concurrent.TrieMap.empty[Latent.CacheKey[?], Any]
 
   /** The value kept under `key`, made by `make` on first use. */
-  private[witdraw] def cached(key: String)(make: => AnyRef): AnyRef =
-    caches.getOrElseUpdate(key, make)
+  private[witdraw] def cached[A](key: Latent.CacheKey[A])(make: => A): A =
+    caches.getOrElseUpdate(key, make).asInstanceOf[A]
 
   /** The type of what the model returns, e.g. a named tuple of tensors. It is
     * inferred from the model, so it only needs a name where it is written
@@ -302,6 +304,12 @@ sealed abstract class Latent private (
   def modelLogDensity(params: Params): Tensor0[Float32] = logSumExp(logJoint(params)._1)
 
 object Latent:
+
+  /** The key of something an inference algorithm keeps with a latent, of type
+    * `A`, e.g. NUTS's compiled kernel. Keys are compared by identity, so each
+    * algorithm declares its own.
+    */
+  private[witdraw] final class CacheKey[A]
 
   /** Runs `model` forward once, and collects its latent sites: the sites that
     * are not observed. The values of that run are the default starting point,
