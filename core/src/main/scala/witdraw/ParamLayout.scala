@@ -31,7 +31,7 @@ private[witdraw] final class ParamLayout(val slots: Vector[ParamLayout.Slot[?]])
       )
     )
 
-  /** Runs `model` with the latent sites observed on their values at `params`.
+  /** Runs `model` with the latent sites set to their values at `params`.
     * Returns the model's result and the sum of the log-Jacobians of the
     * bijectors.
     *
@@ -57,7 +57,7 @@ private[witdraw] final class ParamLayout(val slots: Vector[ParamLayout.Slot[?]])
               val (value, logDetJac) = slot.forward(t, slot.part(params))
               logJacobian = logJacobian + logDetJac
               outer.sample(
-                statement.copy(observed = Some(value.asInstanceOf[Tensor[T, V]]))
+                statement.copy(value = Some(value.asInstanceOf[Tensor[T, V]]))
               )
     )
     (result, logJacobian)

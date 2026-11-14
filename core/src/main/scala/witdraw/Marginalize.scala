@@ -40,9 +40,9 @@ def marginalize[A](sites: SiteDef[?, ?]*)(model: ProbProg[A])(using
   intercept("marginalized", "marginalize", sites.map(_ -> ()))(
     [T <: Tuple, V] =>
       (statement: SampleStatement[T, V], _: Unit) =>
-        if statement.observed.isDefined then
+        if statement.value.isDefined then
           throw IllegalArgumentException(
-            s"Site '${statement.site.name}' is marginalized, but it is observed inside the marginalize block. " +
+            s"Site '${statement.site.name}' is marginalized, but its value is fixed inside the marginalize block, e.g. it is observed there. " +
               "Only latent sites can be summed out; to fix its value, observe it outside the block."
           )
         statement.copy(marginalized = true)

@@ -76,7 +76,7 @@ class ProbContextSuite extends munit.FunSuite:
               s: SampleStatement[T, V]
           ): Tensor[T, V] =
             seen += s"${s.site.name}${
-                if s.observed.isDefined then "=obs" else ""
+                if s.value.isDefined then "=obs" else ""
               }"
             outer.sample(s)
       )
@@ -109,7 +109,7 @@ class ProbContextSuite extends munit.FunSuite:
       ForwardSampler.run(Key(1))(withTrace(observe(Y := yData)(model)))
     assertEquals(tr.sites, Seq(Mu, Sigma, Y))
     assertEquals(tr.latentSites, Seq(Mu, Sigma))
-    assertEquals(tr.observedSites, Seq(Y))
+    assertEquals(tr.fixedSites, Seq(Y))
     assertEquals(tr(Mu).item, r.mu.item)
     val total = tr.entries.map(_.logProb).reduce(_ + _)
     assertEqualsFloat(total.item, manualLogProb(r.mu.item, r.sigma.item), 1e-3f)

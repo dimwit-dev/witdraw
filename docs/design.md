@@ -43,7 +43,7 @@ Two kinds of contexts exist:
 | Kind | Role | Examples |
 | --- | --- | --- |
 | Interpreter | The outermost context. Decides each value and what a run produces. | `ForwardSampler` (draws free sites, returns the result), `ModelScorer` (requires every site observed, returns the log-density) |
-| Handler | Wraps the context it is given. Sees each statement of its block, may change or record it, then passes it outward. | `observe` (sets `observed`), `marginalize` (sets `marginalized`), `withTrace` (records), `ParamLayout.substitute` (sets latent values from parameters) |
+| Handler | Wraps the context it is given. Sees each statement of its block, may change or record it, then passes it outward. | `observe` (sets `value`), `marginalize` (sets `marginalized`), `withTrace` (records), `ParamLayout.substitute` (sets latent values from parameters) |
 
 In `ForwardSampler.run(key)(withTrace(observe(Y := y)(model)))` a sample call
 travels from the model to `observe`, then `withTrace`, then `ForwardSampler`.
@@ -72,7 +72,7 @@ statement carries everything a handler or interpreter needs:
 | `site` | Which site is sampled |
 | `distribution` | Its distribution, for drawing and for `logProb` |
 | `support` | The values the distribution can take |
-| `observed` | A value set by a handler, e.g. `observe` or `substitute` |
+| `value` | The site's value, if a handler fixed it: data from `observe`, or a value inference sets, e.g. through `substitute`. Interpreters use it instead of drawing, and score it. |
 | `marginalized` | Set by `marginalize`: inference should sum this site out |
 
 The support is found at compile time: `~` takes a `SupportOf[D, T, V]` for the
@@ -97,7 +97,8 @@ summed out.
 handlers further in have changed it, together with the value the outer context
 returned. It returns the model's result and a `Trace`: one `TraceEntry` per
 site, in sampling order, holding the site, distribution, value, support and the
-`observed` and `marginalized` flags.
+`fixed` and `marginalized` flags. Which sites are latent depends on the
+handlers inside the trace: around `substitute(p)(model)` no site is.
 
 Traces are how witdraw learns the structure of a model without any static
 analysis: run it once, look at what happened. Put `withTrace` outside

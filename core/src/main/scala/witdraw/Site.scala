@@ -43,7 +43,7 @@ trait SiteDef[T <: Tuple, V](using val labels: Labels[T], owner: Scope):
       supportOf: SupportOf[D, T, V] = SupportOf.unknown[D, T, V]
   ): Tensor[T, V] =
     ctx.sample(
-      SampleStatement(this, dist, supportOf(dist), observed = None)
+      SampleStatement(this, dist, supportOf(dist), value = None)
     )
 
   /** An observation of this site, to pass to [[observe]]. */

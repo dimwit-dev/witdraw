@@ -22,11 +22,11 @@ def observe[A](observations: Observation[?, ?]*)(model: ProbProg[A])(using
   intercept("observed", "observe", observations.map(o => o.site -> o.value))(
     [T <: Tuple, V] =>
       (statement: SampleStatement[T, V], value: Tensor[?, ?]) =>
-        if statement.observed.isDefined then
+        if statement.value.isDefined then
           throw IllegalArgumentException(
             s"Site '${statement.site.name}' is observed twice, by nested observe blocks."
           )
-        statement.copy(observed = Some(value.asInstanceOf[Tensor[T, V]]))
+        statement.copy(value = Some(value.asInstanceOf[Tensor[T, V]]))
   )(model)
 
 /** Runs `model`, and changes the statement of each site in `sites` with

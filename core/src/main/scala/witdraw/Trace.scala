@@ -4,12 +4,17 @@ import dimwit.*
 import dimwit.stats.Distribution
 import scala.collection.mutable
 
-/** What happened at one site during a run of a model. */
+/** What happened at one site during a run of a model.
+  *
+  * @param fixed
+  *   whether a handler further in fixed the site's value, e.g. [[observe]],
+  *   rather than leaving it to be drawn
+  */
 case class TraceEntry[T <: Tuple, V](
     site: SiteDef[T, V],
     distribution: Distribution[T, V],
     value: Tensor[T, V],
-    observed: Boolean,
+    fixed: Boolean,
     support: Support[T, V],
     marginalized: Boolean = false
 ):
@@ -21,18 +26,24 @@ case class TraceEntry[T <: Tuple, V](
   *
   * {{{
   * val (result, tr) = ForwardSampler.run(key)(withTrace(model(x)))
-  * tr.latentSites   // the sites that were not observed
+  * tr.latentSites   // the sites whose value was not fixed, e.g. observed
   * tr(Sigma)        // the value of Sigma in this run, a Sigma.Value
   * }}}
+  *
+  * Which sites are latent depends on the handlers inside the trace: around
+  * `observe(Y := y)(model)` every site but `Y` is latent.
   */
 final class Trace(val entries: Seq[TraceEntry[?, ?]]) extends SiteValues:
   private val bySite: Map[SiteDef[?, ?], TraceEntry[?, ?]] =
     entries.map(e => e.site -> e).toMap
 
   def sites: Seq[SiteDef[?, ?]] = entries.map(_.site)
+  /** The sites whose value no handler fixed. */
   def latentSites: Seq[SiteDef[?, ?]] =
-    entries.filterNot(_.observed).map(_.site)
-  def observedSites: Seq[SiteDef[?, ?]] = entries.filter(_.observed).map(_.site)
+    entries.filterNot(_.fixed).map(_.site)
+
+  /** The sites whose value a handler fixed, e.g. the observed ones. */
+  def fixedSites: Seq[SiteDef[?, ?]] = entries.filter(_.fixed).map(_.site)
 
   /** The entry of `site`, if the run sampled it. */
   def entry(site: SiteDef[?, ?]): Option[TraceEntry[?, ?]] = bySite.get(site)
@@ -48,18 +59,18 @@ final class Trace(val entries: Seq[TraceEntry[?, ?]]) extends SiteValues:
 
   override def toString: String =
     entries
-      .map(e => s"${e.site.name}${if e.observed then " (observed)" else ""}")
+      .map(e => s"${e.site.name}${if e.fixed then " (fixed)" else ""}")
       .mkString("Trace(", ", ", ")")
 
 /** Runs `model` and records every site it samples, together with its
-  * distribution, value and whether it was observed. Returns the model's result
-  * and the [[Trace]].
+  * distribution, value and whether its value was fixed. Returns the model's
+  * result and the [[Trace]].
   *
   * A model that samples a site more than once is an error.
   *
   * Like every handler, `withTrace` sees the statements of its block after the
   * handlers further in have changed them, so put it around `observe` to record
-  * which sites are observed:
+  * which sites are observed, i.e. fixed:
   * {{{
   * ForwardSampler.run(key):
   *   withTrace:
@@ -80,7 +91,7 @@ def withTrace[A](model: ProbProg[A])(using outer: ProbContext): (A, Trace) =
           statement.site,
           statement.distribution,
           value,
-          observed = statement.observed.isDefined,
+          fixed = statement.value.isDefined,
           statement.support,
           statement.marginalized
         )

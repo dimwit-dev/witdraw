@@ -30,10 +30,14 @@ trait ProbContext:
   def sample[T <: Tuple, V](statement: SampleStatement[T, V]): Tensor[T, V]
 
 /** One `site ~ distribution` call, with the site's value if a handler has
-  * observed it.
+  * fixed it.
   *
   * @param support
   *   the [[Support]] of the distribution
+  * @param value
+  *   the site's value, if a handler has fixed it: data from [[observe]], or a
+  *   value inference sets, e.g. a parameter of a [[Latent]]. Interpreters use
+  *   it instead of drawing, and score it.
   * @param marginalized
   *   whether a [[marginalize]] handler asks inference to sum the site out
   */
@@ -41,7 +45,7 @@ case class SampleStatement[T <: Tuple, V](
     site: SiteDef[T, V],
     distribution: Distribution[T, V],
     support: Support[T, V],
-    observed: Option[Tensor[T, V]],
+    value: Option[Tensor[T, V]],
     marginalized: Boolean = false
 )
 

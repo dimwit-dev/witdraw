@@ -4,8 +4,8 @@ import dimwit.*
 import dimwit.random.Random
 
 /** Runs a model forward: free sites are drawn from their distributions,
-  * observed sites keep their observed value. The result is the model's own
-  * return value.
+  * sites whose value a handler fixed, e.g. observed ones, keep that value. The
+  * result is the model's own return value.
   */
 object ForwardSampler:
   def run[A](key: Random.Key)(model: ProbProg[A]): A =
@@ -16,7 +16,7 @@ object ForwardSampler:
         def sample[T <: Tuple, V](
             statement: SampleStatement[T, V]
         ): Tensor[T, V] =
-          statement.observed.getOrElse:
+          statement.value.getOrElse:
             val (keep, use) = nextKey.split2()
             nextKey = keep
             statement.distribution.sample(use)
@@ -32,9 +32,9 @@ object ForwardSampler:
     require(n > 0, s"n must be positive, but is $n")
     key.split(n).map(k => run(k)(model))
 
-/** Computes the log-density of a model in which every site is observed, e.g.
-  * the unnormalised log posterior of a model observed on data and parameters. A
-  * free site is an error.
+/** Computes the log-density of a model in which every site has a value, e.g.
+  * the unnormalised log posterior of a model observed on data, with the
+  * parameters set by a [[Latent]]. A free site is an error.
   */
 object ModelScorer:
   def run[A](model: ProbProg[A]): Tensor0[Float32] = runWithResult(model)._2
@@ -47,9 +47,9 @@ object ModelScorer:
         def sample[T <: Tuple, V](
             statement: SampleStatement[T, V]
         ): Tensor[T, V] =
-          val value = statement.observed.getOrElse:
+          val value = statement.value.getOrElse:
             throw IllegalArgumentException(
-              s"Site '${statement.site.name}' is free, but ModelScorer needs every site to be observed (use observe, or Latent for the parameters)."
+              s"Site '${statement.site.name}' is free, but ModelScorer needs every site to have a value (use observe, or Latent for the parameters)."
             )
           logProb = logProb + statement.distribution.logProb(value).asFloat
           value
