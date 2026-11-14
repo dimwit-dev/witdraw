@@ -34,8 +34,8 @@ class NUTSSuite extends munit.FunSuite:
       case other                         => fail(s"not diagonal: $other")
     // the warmup shrinks the estimate slightly towards 1e-3
     // the mass matrix is not a point of the posterior: read its entries by site
-    assertEqualsFloat(latent.values(variances)(Narrow).item, 0.01f, 0.004f)
-    assertEqualsFloat(latent.values(variances)(Wide).item, 100f, 40f)
+    assertEqualsFloat(latent.partOf(Narrow)(variances).sum.item, 0.01f, 0.004f)
+    assertEqualsFloat(latent.partOf(Wide)(variances).sum.item, 100f, 40f)
     assert(adapted.stepSize > 0.1, s"step size ${adapted.stepSize}")
 
   test("NUTS samples the target with the adapted parameters"):

@@ -53,7 +53,7 @@ class LatentSuite extends munit.FunSuite:
     val grad = Autodiff.grad(latent.modelLogDensity)(p).value
     // d/dmu at mu = 0, sigma = 1: sum(y) - mu / 100
     // the gradient is not a point of the posterior: read its entry for Mu by site
-    assertEqualsFloat(latent.values(grad)(Mu).item, 1.5f, 1e-4f)
+    assertEqualsFloat(latent.partOf(Mu)(grad).sum.item, 1.5f, 1e-4f)
 
   test("result is the model's own result at the parameters, with the data"):
     val p = latent.initWith(Mu := Tensor0(0.3f), Sigma := Tensor0(1.5f))

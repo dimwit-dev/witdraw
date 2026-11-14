@@ -104,11 +104,12 @@ sealed abstract class Latent private (
   private def at(params: Flat, k: Tensor0[Int32]): ProbProg[(Any, Tensor0[Float32])] =
     layout.substitute(params)(enumeration.condition(k)(model))
 
-  /** The values of the latent sites at `params`, in the model's own space, by
-    * site, e.g. for tests of the supports. Users read [[result]] instead.
+  /** The entries of `site` in a vector over the parameters, e.g. a gradient or
+    * the diagonal of a mass matrix, as they stand: unconstrained, without its
+    * bijector. Unlike [[result]], it does not treat `params` as a point.
     */
-  private[witdraw] def values(params: Params): SiteValues =
-    traceOf(layout.substitute(params)(model))
+  private[witdraw] def partOf(site: SiteDef[?, ?])(params: Params): Tensor1[LatentDim, Float32] =
+    layout.slotOf(site).part(params)
 
   /** The model's result at `params`: the model run with the latent sites set to
     * their values at `params`, and the observed sites to their data. The same

@@ -178,7 +178,7 @@ reduction over `k` of such runs:
 | `logDensity(p)` | `logSumExp` over `k` of log-density plus log-Jacobian: the density of the unconstrained values (NUTS and Laplace use it) |
 | `result(p)` | `ForwardSampler.run(at(p, 0))`, jit-compiled. Only defined when the enumeration is trivial, since otherwise `p` does not fix the model's result. |
 | `resultOf(draw)` | The same compiled function at the draw's `(p, k)` |
-| `values(p)` (tests only) | The trace of `substitute(p)(model)` |
+| `partOf(site)(v)` (internal) | The entries of a site in any vector over the parameters, e.g. a gradient or a mass matrix: the slot's part, without a bijector |
 
 For a model without sites summed out there is a single combination,
 `logSumExp` of one entry is that entry, and the formulas reduce to the familiar
