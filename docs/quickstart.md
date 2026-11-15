@@ -1,28 +1,13 @@
 # Quickstart: Bayesian linear regression
 
-This guide introduces the main ideas of WitDraw through one running example,
-Bayesian linear regression. By the end you will have written a model, drawn
-samples from it, and fitted it to data with the No-U-Turn Sampler (NUTS).
+In WitDraw, a model is a joint probability distribution over all quantities
+of a problem: the parameters we want to learn and the data we observe. Once
+the joint distribution is written down, a Bayesian analysis consists of asking
+it questions: drawing from it, evaluating its density and, above all,
+conditioning it on the data we have observed. This guide develops these ideas
+on one running example, Bayesian linear regression.
 
-## The big picture
-
-A WitDraw program has four ingredients:
-
-- **Sites** name the random variables of a model and fix their tensor types.
-- A **model** is an ordinary Scala method that describes how data is
-  generated. It needs a `ProbContext` to run, which it receives as a
-  `using` parameter.
-- **Interpreters** provide that context and so give the model its meaning.
-  `ForwardSampler` runs it and draws a value for every random variable;
-  `ModelScorer` computes its log-density for given values.
-- **Handlers** sit between a model and the interpreter and change what the
-  model's random variables do. `observe` is a handler: it fixes some sites to
-  known values.
-
-Everything else - prior predictive checks, posterior inference - is built from
-these pieces.
-
-## The model
+## A model is a joint distribution
 
 We want to model outcomes $y_n$ as a linear function of features $x_n$, plus
 Gaussian noise:
@@ -36,6 +21,55 @@ y_n &\sim \mathcal{N}(\alpha + x_n \cdot \beta,\ \sigma^2) && n = 1, \dots, N
 \end{aligned}
 $$
 
+These four lines define one joint distribution over all random variables of
+the problem, given the features $x = (x_1, \dots, x_N)$:
+
+$$
+p(\alpha, \beta, \sigma, y \mid x)
+  = p(\alpha)\, p(\beta)\, p(\sigma) \prod_{n=1}^N p(y_n \mid \alpha, \beta, \sigma, x_n).
+$$
+
+Each line contributes the distribution of its variable given the variables it
+depends on: the first three lines one factor each, the last line one factor
+per observation. The model does not describe how the features arise: they are
+fixed inputs, which is why they appear only to the right of the bar.
+
+The same factorisation can be read as a recipe for generating data: draw
+$\alpha$, $\beta$ and $\sigma$ from their priors, then each $y_n$ given them.
+This is why such a model is called *generative*. The recipe and the joint
+distribution are one and the same thing, seen in two ways: the order in which
+we draw the variables is the order of the factors.
+
+Every task in this guide is a question asked of this one joint distribution.
+The two most basic questions are: what do draws from it look like, and what is
+its density at given values of all variables? The question that a data
+analysis is about, though, starts from the outcomes $y_\text{obs}$ we have
+actually observed. Fixing $y$ to $y_\text{obs}$ and asking what this tells us
+about the remaining variables is *conditioning*, and its answer is the
+*posterior* distribution $p(\alpha, \beta, \sigma \mid y_\text{obs}, x)$. As
+we will see, the posterior needs nothing beyond the joint distribution: up to a
+constant, its density is the joint density with $y$ fixed to the data.
+
+A WitDraw model is a direct translation of the factorisation: each line above
+becomes one statement in the program. Each concept so far has its counterpart
+in WitDraw:
+
+| Concept | In WitDraw |
+| --- | --- |
+| A random variable | a `Site` |
+| One factor $p(v \mid \dots)$ | a statement `Site ~ distribution` |
+| The joint distribution | a model: a method that runs these statements |
+| Drawing from the joint | `ForwardSampler` |
+| Evaluating the joint density | `ModelScorer` |
+| Fixing variables to given values, e.g. the data | the handler `observe` |
+| The posterior: the density of the other variables, up to a constant | `Latent` |
+
+An *interpreter*, such as `ForwardSampler` or `ModelScorer`, does not change
+what the model means: the model always describes the same joint distribution.
+The interpreter decides which computation is performed with it. A *handler*,
+such as `observe`, sits between the model and the interpreter and changes
+what individual random variables do, here by fixing their values.
+
 ## Setup
 
 We import [dimwit](https://github.com/dimwit-dev/dimwit), which provides the
@@ -45,7 +79,8 @@ tensors and distributions, and WitDraw itself:
 import dimwit.*
 import dimwit.stats.*
 import witdraw.*
-import witdraw.inference.{Diagnostics, NUTS}
+import witdraw.inference.NUTS
+import witdraw.inference.Summary.summary
 ```
 
 Every program that uses dimwit must initialise the dimwit runtime first:
@@ -59,9 +94,16 @@ dimwit.initialize()
 dimwit tensors have *labelled* axes, so we first define a label for each kind
 of axis: one entry per feature and one per sample (observation).
 
-Then we declare one site per random variable. A site is an `object`, so it
-has a name that we can refer to later, for example when we condition on
-observed data. Its type parameter is the tensor type of the variable.
+Then we declare one site per random variable: `Alpha`, `Beta`, `Sigma` and `Y`
+stand for $\alpha$, $\beta$, $\sigma$ and $y = (y_1, \dots, y_N)$. A site is an
+`object`, so it has a name that we can refer to later, for example when we
+condition on observed data. Its type parameter is the tensor type of the
+variable: $\beta$ is a vector with one entry per feature, $y$ one with one
+entry per sample.
+
+A site stands for the variable, not for a value of it. In the code below, the
+features $x$ are `xData`, and the observed outcomes $y_\text{obs}$ are
+`yData`, a value we will give to the site `Y`.
 
 ```scala
 trait Feature derives Label
@@ -105,46 +147,72 @@ def model(x: Tensor2[Sample, Feature, Float32])(using ProbContext) =
   (alpha = alpha, beta = beta, sigma = sigma, y = y)
 ```
 
+Line by line, this is the model from the beginning: one `~` statement per
+line, each with the distribution of its variable given the values computed
+before it. The statements for $\alpha$, $\beta$ and $\sigma$ are one factor
+each. The statement for `Y` is all $N$ factors $\prod_n p(y_n \mid \alpha, \beta, \sigma, x_n)$
+at once: `y` is a vector with one entry per sample, and
+`Normal.isotropic` is the distribution of $N$ independent normal variables, so
+its density is the product of their densities. Two details differ from the
+mathematical notation: dimwit parametrises a normal distribution by its
+standard deviation, not its variance, so $\mathcal{N}(0, 10^2)$ becomes
+`Normal(0f, 10f)`; and the mean `mu` is not a site, because it is not random:
+values computed from other variables are ordinary code.
+
+The order of the statements is the order of the factors. The model's density
+is the product of the factors, so its log-density is the sum of the
+log-densities of its `~` statements. This is what `ModelScorer`
+computes: given an assignment of values to all variables, it runs the model
+with those values and returns the log-density of the joint distribution at
+them, $\log p(\alpha, \beta, \sigma, y \mid x)$. It works for any assignment,
+so `ModelScorer` lets us evaluate the joint density wherever we like. It
+returns the logarithm rather than the density itself, because the density is
+a product of many factors, here 103, which quickly becomes too small to
+represent as a floating-point number; the sum of their logarithms does not.
+
 The model returns a named tuple of all its variables. This is what
 `ForwardSampler` gives back, so naming the fields makes the samples easy to
 use.
 
-## Synthetic data
+## Features
 
-To check that inference works, we simulate data where we know the answer.
+The model needs features to run: they are its inputs. We draw 100 samples of
+two features at random.
+
 dimwit uses explicit random keys (as in JAX). We split one root key into
-independent keys, one for each use, so that no key is used twice:
+independent keys, one for each use in this guide, so that no key is used
+twice:
 
 ```scala
-val (dataKey, noiseKey, priorKey, fixedKey, nutsKey) =
-  val ks = Key(42).split(5)
-  (ks(0), ks(1), ks(2), ks(3), ks(4))
+val (featureKey, priorKey, fixedKey, dataKey, nutsKey, replicateKey) =
+  val ks = Key(42).split(6)
+  (ks(0), ks(1), ks(2), ks(3), ks(4), ks(5))
 
 val sampleExtent = Axis[Sample] -> 100
 val featureExtent = Axis[Feature] -> 2
 
 // independent standard-normal features
-val xData = Normal.standardNormal(Shape(sampleExtent, featureExtent)).sample(dataKey)
-
-// y = alpha + x · beta + sigma * eps
-val alphaTrue = Tensor0(0.5f)
-val betaTrue = Tensor(Shape(featureExtent)).fromArray(Array(-1.5f, 2.0f))
-val sigmaTrue = Tensor0(0.8f)
-val eps = Normal.standardNormal(Shape(sampleExtent)).sample(noiseKey)
-val yData = (xData.dot(Axis[Feature])(betaTrue) +! alphaTrue) + (eps *! sigmaTrue)
+val xData = Normal.standardNormal(Shape(sampleExtent, featureExtent)).sample(featureKey)
 ```
 
 The features are drawn independently on purpose. If one feature were a
 multiple of the other, only a combination of the weights could be learned
-from the data, and no inference algorithm could recover `betaTrue`.
+from the data, and no inference algorithm could recover the weights.
 
-## Sampling from the model
+## Drawing from the joint distribution
 
 A model can only run inside a context, so to draw from it we hand
 `model(xData)` to `ForwardSampler`. (Calling `model(xData)` on its own, outside
-an interpreter, is a compile error.) With no site conditioned, this samples
-every variable from its prior, so the `y` values are draws from the *prior
-predictive* distribution:
+an interpreter, is a compile error.) `ForwardSampler` follows the generative
+recipe: it draws each variable in turn, given the values drawn before it. Each
+run is therefore one draw $(\alpha, \beta, \sigma, y)$ from the joint
+distribution.
+
+To study only some of the variables, we ignore the others in each draw. The
+`y` values on their own are then draws from the *prior predictive*
+distribution $p(y \mid x)$: what the model expects data to look like before
+seeing any. (Ignoring variables in draws from a joint distribution gives draws
+from the marginal distribution of the rest.)
 
 ```scala
 val priorPredictive = ForwardSampler.sample(priorKey, 5)(model(xData))
@@ -159,14 +227,16 @@ Each sample is a named tuple, so we can print a short summary of each:
 priorPredictive.foreach { s =>
   println(f"alpha=${s.alpha.item}%7.2f  sigma=${s.sigma.item}%7.2f  mean(y)=${s.y.mean.item}%8.2f")
 }
-// alpha=   3.57  sigma=   2.96  mean(y)=    3.51
-// alpha=   0.02  sigma=   3.84  mean(y)=   -1.06
-// alpha=  23.41  sigma=   1.85  mean(y)=   22.30
-// alpha=   0.68  sigma=  53.42  mean(y)=    1.33
-// alpha= -10.14  sigma=  13.13  mean(y)=  -10.02
+// alpha=   4.95  sigma=  73.70  mean(y)=    2.62
+// alpha=  18.57  sigma=   2.84  mean(y)=   18.30
+// alpha=  -5.67  sigma=   2.53  mean(y)=   -4.97
+// alpha=   6.84  sigma=  11.85  mean(y)=    7.63
+// alpha=   9.57  sigma=   2.96  mean(y)=   10.11
 ```
 
 The spread of these draws shows how vague our priors are.
+
+### Fixing a variable
 
 The handler `observe` runs a block of code with some sites fixed to given
 values. Here we fix the noise scale to 1 and let everything else vary:
@@ -182,24 +252,126 @@ val withFixedSigma =
 withFixedSigma.foreach { s =>
   println(f"sigma=${s.sigma.item}%4.2f  mean(y)=${s.y.mean.item}%8.2f")
 }
-// sigma=1.00  mean(y)=   -2.25
-// sigma=1.00  mean(y)=   11.51
-// sigma=1.00  mean(y)=    8.88
-// sigma=1.00  mean(y)=    2.48
-// sigma=1.00  mean(y)=  -16.95
+// sigma=1.00  mean(y)=    3.41
+// sigma=1.00  mean(y)=   -0.97
+// sigma=1.00  mean(y)=   21.99
+// sigma=1.00  mean(y)=    0.07
+// sigma=1.00  mean(y)=  -10.59
 ```
 
-## Posterior inference
+These are draws from the conditional distribution
+$p(\alpha, \beta, y \mid \sigma = 1, x)$: fixing $\sigma$ and running the
+recipe is conditioning on $\sigma$. This works because $\sigma$ depends on no
+other variable. Knowing it tells us nothing about $\alpha$ and $\beta$, which
+the recipe draws from their priors as before, and $y$ is drawn given the
+value of $\sigma$ we fixed.
 
-Now we condition on the observed outcomes and ask which parameter values are
-plausible. The model observed on the data has three *latent* sites left,
-`Alpha`, `Beta` and `Sigma`: the parameters whose posterior we want.
+The same is not true for the data, because $y$ depends on $\alpha$, $\beta$
+and $\sigma$. Observing `Y` inside `ForwardSampler` would draw the parameters
+from their priors, exactly as before, and merely skip drawing $y$: the recipe
+runs forwards, and the information in $y$ cannot flow back to the parameters
+it depends on. Conditioning on the data means running the recipe backwards,
+and that is the task of inference.
 
-The inference methods in WitDraw work on a `Latent`: the latent sites, a
-parameter type for them, and the posterior's log-density as a function of
-that type. `Latent.discover` builds it. It runs the observed model forward
-once, records every site with the `withTrace` handler, and collects the sites
-that are not observed:
+So `observe` always means the same thing: this variable has this value.
+Whether a computation turns that into the conditional distribution of the
+other variables depends on the interpreter. `ForwardSampler` does so only when
+the fixed variables depend on no free variable, as for $\sigma$ here. For any
+variables, and in particular for the data, this is the job of inference,
+which we turn to after making some data.
+
+## Simulating data from known parameters
+
+To check that inference works, we need data for which we know the answer. We
+already have everything to make it: we fix all three parameters to chosen
+"true" values and run the model forwards. The outcomes are then one draw from
+$p(y \mid \alpha, \beta, \sigma, x)$, data that the model itself could have
+produced with these parameters:
+
+```scala
+val alphaTrue = Tensor0(0.5f)
+val betaTrue = Tensor(Shape(featureExtent)).fromArray(Array(-1.5f, 2.0f))
+val sigmaTrue = Tensor0(0.8f)
+
+val yData =
+  ForwardSampler.run(dataKey):
+    observe(Alpha := alphaTrue, Beta := betaTrue, Sigma := sigmaTrue):
+      model(xData)
+  .y
+```
+
+From now on we pretend not to know the true values, and ask what the data
+tells us about them.
+
+## Conditioning on the data
+
+What we want is the *posterior* distribution: the distribution of the
+parameters $\theta = (\alpha, \beta, \sigma)$ given the observed outcomes
+$y_\text{obs}$. By the definition of conditional probability (Bayes' rule),
+
+$$
+p(\theta \mid y_\text{obs}, x)
+  = \frac{p(\theta, y_\text{obs} \mid x)}{p(y_\text{obs} \mid x)}
+  = \frac{p(\theta)\, p(y_\text{obs} \mid \theta, x)}{p(y_\text{obs} \mid x)}.
+$$
+
+The numerator is the joint density, with the outcomes fixed to the
+observations. By the factorisation of our model it is the product of two
+parts: the *prior* $p(\theta) = p(\alpha)\, p(\beta)\, p(\sigma)$, the first
+three lines of the model, and the *likelihood*
+$p(y_\text{obs} \mid \theta, x) = \prod_n p(y_{\text{obs},n} \mid \alpha, \beta, \sigma, x_n)$,
+the last line, which measures how well the parameters
+$\theta$ explain the observed data.
+
+### The posterior as a function of the parameters
+
+`ModelScorer` evaluates the joint log-density for any assignment of values to
+all variables. The outcomes are given, so only the parameters are left to
+choose, and for every $\theta$ we can compute
+
+$$
+\theta \mapsto \log p(\theta, y_\text{obs} \mid x),
+$$
+
+a function of the parameters alone. We can write it down directly, with
+`observe` fixing all sites:
+
+```scala
+def logJoint(alpha: Float, beta: Array[Float], sigma: Float): Float =
+  ModelScorer.run:
+    observe(
+      Y := yData,
+      Alpha := Tensor0(alpha),
+      Beta := Tensor1(Axis[Feature]).fromArray(beta),
+      Sigma := Tensor0(sigma)
+    ):
+      model(xData)
+  .item
+```
+
+At the true parameters it is far higher than at, say, $\alpha = 0$,
+$\beta = 0$, $\sigma = 1$, which explain the data much worse:
+
+```scala
+logJoint(0.5f, Array(-1.5f, 2.0f), 0.8f)
+// res3: Float = -122.983185F
+logJoint(0f, Array(0f, 0f), 1f)
+// res4: Float = -446.39734F
+```
+
+The denominator is an integral over all parameters, which we usually cannot
+compute. But it does not depend on $\theta$, so the function above is the log
+posterior up to a constant. That is enough: Markov chain Monte Carlo (MCMC)
+methods such as NUTS draw from a distribution given only its log-density up to
+a constant. The model observed on the data therefore already defines
+everything inference needs.
+
+### Finding the parameters: `Latent`
+
+To turn the observed model into this function, we must know its arguments:
+the sites that are not observed. These are the *latent* sites. `Latent.discover`
+finds them: it runs the observed model forward once, records every site, and
+collects those without a value:
 
 ```scala
 val latent = Latent.discover:
@@ -209,48 +381,37 @@ val latent = Latent.discover:
 
 ```scala
 latent.sites.map(_.name)
-// res3: Seq[String] = Vector("Alpha", "Beta", "Sigma")
+// res5: Seq[String] = Vector("Alpha", "Beta", "Sigma")
 ```
 
-`latent.Params` is a parameter type made for this model: one unconstrained
-value per latent site, in one vector, which is where inference moves. We do
-not read it directly: `latent.result(params)` gives what the model returns at
+`latent.logDensity` is the function above. Its argument has the type
+`latent.Params`, made for this model: one value per latent site, in one
+vector. To evaluate it, `Latent` fixes the latent sites to these values, so
+that every site has a value, and runs `ModelScorer`.
+
+How the values are laid out in the vector is an internal detail, so we do not
+read it directly: `latent.result(params)` gives what the model returns at
 given parameters, the same named tuple as the prior predictive draws above.
-`latent.logDensity` is the log-density as a function of `latent.Params`, and
 `latent.init` is a starting point for inference: the values of the traced
-run.
+run, i.e. one draw of the parameters from the prior.
 
-Handlers nest like any other block, and each one sees every random variable
-that is sampled inside its block. To compute `logDensity`, `Latent` wraps the
-model in one more `observe` that fixes the latent sites to the given
-parameters, so `ModelScorer` finds every site observed and adds up their
-log-densities.
-
-### How sigma stays positive
-
-NUTS moves freely through all of $\mathbb{R}^n$, but $\sigma$ must be positive.
-If we sampled $\sigma$ directly, the sampler would sooner or later try
-negative values, where the model's density is undefined. The standard fix is
-to sample $z = \log \sigma$ instead, which can be any real number.
-
-Every distribution has a *support*, the values it can take, and each support
-comes with a `Bijector`, a change of variables from unconstrained values to
-the support. `HalfCauchy` takes
-positive values, so `Latent` samples `Sigma` through $\sigma = e^z$. The
-sampler then moves in unconstrained space, and `latent.logDensity` includes the
-Jacobian correction for the change of variables. We never see $z$ ourselves:
-`latent.result(params).sigma` always gives $\sigma = e^z$.
+The `latent` is all an inference algorithm needs, and we hand it to NUTS next.
 
 ### Running NUTS
 
-NUTS is a variant of Hamiltonian Monte Carlo that chooses the length of each
-trajectory automatically. It still has two tuning parameters: the step size,
-and the mass matrix, which rescales each direction of the parameter space and
-works best when it approximates the posterior covariance. `NUTS.adapt` runs a
-warmup that tunes both (Stan's window adaptation, run by BlackJax). The warmup
+An MCMC method produces a sequence of draws
+$\theta^{(1)}, \dots, \theta^{(S)}$, a *chain*, whose distribution approaches
+the posterior. Each step moves from the current draw to a new one, using only
+the log-density. Averages over the draws then estimate averages over the
+posterior: the posterior mean $E[\alpha \mid y_\text{obs}, x]$, for example,
+is estimated by $\frac{1}{S} \sum_s \alpha^{(s)}$.
+
+NUTS (the No-U-Turn Sampler) is such a method. It follows the gradient of the
+log-density, which lets it take large steps through the parameter space. It
+has tuning parameters, which `NUTS.adapt` sets in a warmup phase. The warmup
 also moves the chain away from its starting point, so no draws need to be
 discarded afterwards: `adapted.sample` continues where the warmup ended, and
-returns a chain of draws; `samples` gives the model's result at each, the same
+returns the chain; `samples` gives the model's result at each draw, the same
 named tuple as the prior predictive draws above.
 
 ```scala
@@ -261,41 +422,33 @@ val nutsChain = adapted.sample(sampleKey, nSamples)
 val samples = nutsChain.samples
 ```
 
-The tuned step size is `adapted.stepSize`. By default the mass matrix is
-diagonal, and `adapted.inverseMassMatrix` holds the estimated posterior
-variance of each parameter; `dense = true` estimates the full covariance
-instead, at the cost of a longer warmup. To choose the parameters yourself,
-use `NUTS(latent, stepSize = 0.05)`, optionally with an `InverseMassMatrix`.
-
 ### Checking the result
 
-Finally we stack the draws along a new axis and compare the posterior mean
-and standard deviation of each parameter with the true values:
+Finally we summarise the posterior and compare it with the true values.
+`Summary.summary` takes a sequence of chains, here just one, and picks the
+quantities to summarise from the model's result at each draw, as a named
+tuple. It gives one row per element of each quantity, with estimates from the
+draws: the posterior mean, the posterior standard deviation and the 94%
+highest density interval (HDI), the narrowest interval that holds 94% of the
+draws. The HDI is a *credible interval*: given the data, the parameter lies in
+it with probability 0.94. The last two columns are diagnostics, which we come
+back to below.
 
 ```scala
-trait Draw derives Label
-
-def summary[T <: Tuple: Labels](draws: Seq[Tensor[T, Float32]]) =
-  val stacked = stack(draws, Axis[Draw])
-  (stacked.mean(Axis[Draw]), stacked.std(Axis[Draw]))
-
-val (alphaMean, alphaSd) = summary(samples.map(_.alpha))
-val (betaMean, betaSd) = summary(samples.map(_.beta))
-val (sigmaMean, sigmaSd) = summary(samples.map(_.sigma))
+println(summary(Seq(nutsChain))(s => (alpha = s.alpha, beta = s.beta, sigma = s.sigma)))
+// parameter      mean        sd    hdi 3%   hdi 97%   rhat     ess
+// alpha         0.408     0.074     0.259     0.544  1.000    2430
+// beta[0]      -1.495     0.080    -1.652    -1.351  1.000    2418
+// beta[1]       1.978     0.075     1.832     2.112  1.000    2129
+// sigma         0.743     0.055     0.643     0.843  1.000    1866
+println(s"true values: alpha $alphaTrue, beta $betaTrue, sigma $sigmaTrue")
+// true values: alpha 0.5, beta [-1.5  2. ], sigma 0.8
 ```
 
-```scala
-println(s"alpha: mean $alphaMean, sd $alphaSd   (true $alphaTrue)")
-// alpha: mean 0.40361282, sd 0.06946172   (true 0.5)
-println(s"beta:  mean $betaMean, sd $betaSd   (true $betaTrue)")
-// beta:  mean [-1.412222  2.04343 ], sd [0.07319704 0.07117827]   (true [-1.5  2. ])
-println(s"sigma: mean $sigmaMean, sd $sigmaSd   (true $sigmaTrue)")
-// sigma: mean 0.6899296, sd 0.05095555   (true 0.8)
-```
-
-The true values lie within roughly two posterior standard deviations of the
-posterior means. With only 100 noisy observations we cannot expect an exact
-match.
+All true values lie inside their 94% intervals. They do not match the
+posterior means exactly: with only 100 noisy observations, the data leaves
+some uncertainty about the parameters, and the standard deviations and
+intervals tell us how much.
 
 Each draw also comes with diagnostic information from the sampler. A healthy
 run has no divergent transitions and a reasonably high acceptance rate:
@@ -304,15 +457,15 @@ run has no divergent transitions and a reasonably high acceptance rate:
 val divergences = nutsChain.numDivergent
 // divergences: Int = 0
 val meanAcceptance = nutsChain.infos.map(_.acceptanceRate).sum / nutsChain.size
-// meanAcceptance: Double = 0.9308549618422985
+// meanAcceptance: Double = 0.910608547002077
 ```
 
 ### Running several chains
 
 One chain cannot tell us whether it has explored the whole posterior. The
 standard check is to run several chains from different starting points and
-compare them. `latent.initRandom` draws a starting point (uniformly between -2
-and 2 in unconstrained space, as Stan does). A chain is ordinary code: here a
+compare them. `latent.initRandom` draws a random starting point, as Stan
+does. A chain is ordinary code: here a
 warmup that tunes NUTS for this chain alone, followed by sampling.
 
 ```scala
@@ -322,10 +475,7 @@ def chain(key: Key, start: latent.Params) =
   adapted.sample(sampleKey, 1000)
 ```
 
-`sample` returns a `Chain`: its draws, with the sampler's info for each.
-`chain.samples` gives the model's result at each draw, and
-`chain.numDivergent` the number of divergent transitions. To run the chains at the same time, we run each in a
-`Future`:
+To run the chains at the same time, we run each in a `Future`:
 
 ```scala
 import scala.concurrent.{Await, Future, blocking}
@@ -338,88 +488,96 @@ val runs = chainsKey.split(4).zip(starts).map((key, start) => Future(blocking(ch
 val chains = Await.result(Future.sequence(runs), Duration.Inf)
 ```
 
-A chain mostly waits for compiled code, and `blocking` lets each chain have a
-thread of its own. The warmup and the sampling loop are compiled for the first
-chain, and the others reuse them. A chain can run any algorithm, use other
-settings, or return more than its draws, e.g. its adapted step size.
-
-`Diagnostics.rhat` compares the chains: values close to 1 mean they agree, and
-values above about 1.01 are a warning. `Diagnostics.ess` estimates how many
-independent draws the chains are worth. Both take the draws of one quantity,
-per chain, and have its shape, so `beta` gets one value per predictor:
+The summary of all chains pools their draws. Its two diagnostic columns
+compare the chains: `rhat` (R-hat) compares the variance between the chains
+with the variance within them. Values close to 1 mean they agree, and values
+above about 1.01 are a warning. `ess`, the effective sample size, estimates
+how many independent draws the correlated draws of the chains are worth:
 
 ```scala
-val chainSamples = chains.map(_.samples)
-// chainSamples: Seq[Seq[NamedTuple[Tuple4["alpha", "beta", "sigma", "y"], Tuple4[Tensor[EmptyTuple, Float32], Tensor[Tuple1[Feature], Float32], Tensor[EmptyTuple, Float32], Tensor[Tuple1[Sample], Float32]]]]] = Vector(
-//   List(
-//     (
-//       0.36428267,
-//       [-1.4184844  2.0454156],
-//       0.72128636,
-//       [-0.10196236  0.2429781  -0.05705082 -2.4873717   3.7834146  -0.4873079
-//  -1.9699229  -1.8418556   1.2729169   3.7633083   4.183006    3.387136
-//   2.9561925  -0.62688136 -4.299474   -0.25279456 -0.8641423   3.6897504
-//  -0.2727195   2.7278574  -2.4174492   5.498894   -0.34408772  0.33337837
-//   0.7967427   4.4882426   5.1004615   1.6002898   1.3427472  -1.447418
-//   1.5399214  -2.2170792  -2.14231     5.986033    4.02204    -1.9723366
-//  -1.5114689  -1.2178509  -0.759506   -0.05417639  6.4333787   3.2024684
-//   0.0425368   3.8634524  -1.4387481  -3.3665395   0.03691113  0.46876243
-//   4.0792418   1.9930805   2.0883217   1.9663954  -1.1308525  -2.3779635
-//   2.5628986  -2.0016458  -0.8894644  -1.4009279   1.2943025  -1.9712675
-//  -1.7932141   2.2704911  -1.9712567   0.6256285  -2.7002976  -4.2193174
-//  -5.6854215  -2.1527383   3.252094    0.551646    0.18111685  3.3525226
-//  -2.0822215  -3.8152156  -0.26669765  0.40129253  3.6129751   5.231741
-//  -0.8901636   2.5462198  -2.3932333  -2.3989074  -0.94802153  3.0354598
-//   2.3858023  -0.73757464  0.09980711  2.6494377   5.2678933  -1.1561251
-//   0.56709236  2.849967    0.48100537 -0.5164595   3.6530075   1.91774
-//  -1.0295032  -0.8064156   2.4187832   0.6456901 ]
-//     ),
-//     (
-//       0.37039635,
-//       [-1.4348248  2.1133378],
-//       0.69500756,
-//       [-0.10196236  0.2429781  -0.05705082 -2.4873717   3.7834146  -0.4873079
-//  -1.9699229  -1.8418556   1.2729169   3.7633083   4.183006    3.387136
-//   2.9561925  -0.62688136 -4.299474   -0.25279456 -0.8641423   3.6897504
-//  -0.2727195   2.7278574  -2.4174492   5.498894   -0.34408772  0.33337837
-//   0.7967427   4.4882426   5.1004615   1.6002898   1.3427472  -1.447418
-//   1.5399214  -2.2170792  -2.14231     5.986033    4.02204    -1.9723366
-//  -1.5114689  -1.2178509  -0.759506   -0.05417639  6.4333787   3.2024684
-//   0.0425368   3.8634524  -1.4387481  -3.3665395   0.03691113  0.46876243
-//   4.0792418   1.9930805   2.0883217   1.9663954  -1.1308525  -2.3779635
-//   2.5628986  -2.0016458  -0.8894644  -1.4009279   1.2943025  -1.9712675
-//  -1.7932141   2.2704911  -1.9712567   0.6256285  -2.7002976  -4.2193174
-//  -5.6854215  -2.1527383   3.252094    0.551646    0.18111685  3.3525226
-//  -2.0822215  -3.8152156  -0.26669765  0.40129253  3.6129751   5.231741
-//  -0.8901636   2.5462198  -2.3932333  -2.3989074  -0.94802153  3.0354598
-//   2.3858023  -0.73757464  0.09980711  2.6494377   5.2678933  -1.1561251
-//   0.56709236  2.849967    0.48100537 -0.5164595   3.6530075   1.91774
-//  -1.0295032  -0.8064156   2.4187832   0.6456901 ]
-//     ),
-//     (
-//       0.36322737,
-//       [-1.3989373  2.1478271],
-// ...
-Diagnostics.rhat(chainSamples.map(_.map(_.beta)))
-// res7: Tensor[Tuple1[Feature], Float32] = [0.9999283 0.9999028]
-Diagnostics.ess(chainSamples.map(_.map(_.sigma)))
-// res8: Tensor[EmptyTuple, Float32] = 4152.4
+println(summary(chains)(s => (alpha = s.alpha, beta = s.beta, sigma = s.sigma)))
+// parameter      mean        sd    hdi 3%   hdi 97%   rhat     ess
+// alpha         0.408     0.074     0.271     0.550  1.000    4308
+// beta[0]      -1.496     0.080    -1.648    -1.347  1.000    4029
+// beta[1]       1.982     0.078     1.837     2.133  0.999    4853
+// sigma         0.744     0.054     0.637     0.838  0.999    3926
 ```
+
+The rows of `beta` are numbered by default; `summary(chains, Axis[Feature].names(...))`
+names them. The diagnostics on their own, as tensors, are
+`Diagnostics.rhat` and `Diagnostics.ess`, both in `witdraw.inference`.
 
 NUTS is not the only inference method: `MAP(latent)` finds the posterior mode,
 and `Laplace(latent)` approximates the posterior by a Gaussian around its mode
 and is run like NUTS. Both are in `witdraw.inference` and take the same
 `latent`.
 
+## Asking the posterior new questions
+
+The posterior draws are draws of $\theta$ only, but the joint distribution
+still tells us how data arises given $\theta$. If we fix the parameters to a
+posterior draw and run the recipe forwards, we get a new data set that the
+model considers plausible after having seen the data. Each pair
+$(\theta, y_\text{rep})$ is a draw from the joint distribution of parameters
+and new data given the observed data. Ignoring $\theta$, as in the prior
+predictive check, leaves draws from the *posterior predictive* distribution
+$p(y_\text{rep} \mid y_\text{obs}, x)$.
+
+No new machinery is needed: this is the same model, the same `observe` and the
+same `ForwardSampler` as in the prior predictive check. Only the values we fix
+are different. Fixing the parameters is plain conditioning here, because they
+are drawn before $y$. We use every tenth draw of the chain:
+
+```scala
+val thinned = samples.grouped(10).map(_.head).toSeq
+val replicated = replicateKey.split(thinned.size).zip(thinned).map { (key, s) =>
+  ForwardSampler.run(key):
+    observe(Alpha := s.alpha, Beta := s.beta, Sigma := s.sigma):
+      model(xData)
+  .y
+}
+```
+
+A *posterior predictive check* compares the replicated data sets with the
+observed one. If the model describes the data well, the observed data should
+look like a typical replication. We compare them through a statistic, here the
+standard deviation of the outcomes, $T(y) = \mathrm{sd}(y)$, and ask how
+often a replication is more spread out than the data:
+
+$$
+p = P\big(T(y_\text{rep}) > T(y_\text{obs}) \mid y_\text{obs}, x\big).
+$$
+
+As for the posterior mean, the fraction of replications for which this holds
+estimates this probability:
+
+```scala
+val replicatedSd = replicated.map(_.std.item)
+```
+
+```scala
+val observedSd = yData.std.item
+// observedSd: Float = 2.5595632F
+val pValue = replicatedSd.count(_ > observedSd).toFloat / replicatedSd.size
+// pValue: Float = 0.56F
+```
+
+A value close to 0 or 1 would mean that the observed spread is unusual under
+the model. Since we simulated the data from the model itself, we expect a
+value well away from both.
+
 ## Composing models
 
-`model` above tells the whole story in one method. As models grow, it helps
-to split them into parts, for example to reuse a likelihood with different
-priors. Since a model is an ordinary method, this is ordinary Scala: a part of
-a model is a method with a `(using ProbContext)` parameter, and calling it
-from another model runs it in the same context.
+`model` above tells the whole story in one method. But the joint density has
+two parts, the prior $p(\theta)$ and the likelihood $p(y \mid \theta, x)$, and
+as models grow it helps to write them as separate parts of the program, for
+example to try a likelihood with different priors. Since a model is an
+ordinary method, this is ordinary Scala: a part of a model is a method with a
+`(using ProbContext)` parameter, and calling it from another model runs it in
+the same context.
 
-The prior is a part of its own. It returns the parameters as a named tuple:
+The prior, $p(\theta) = p(\alpha)\, p(\beta)\, p(\sigma)$, samples the
+parameters and returns them as a named tuple:
 
 ```scala
 type Params = (alpha: Alpha.Value, beta: Beta.Value, sigma: Sigma.Value)
@@ -434,8 +592,9 @@ def prior(nFeatures: Int)(using ProbContext): Params =
   (alpha = alpha, beta = beta, sigma = sigma)
 ```
 
-The likelihood takes the parameters as ordinary tensors. It does not know
-where they come from, only that they have the right types:
+The likelihood, $p(y \mid \theta, x)$, takes the parameters as ordinary
+tensors. Like the bar in $p(y \mid \theta, x)$, its signature says that it
+depends on the parameters, without knowing where they come from:
 
 ```scala
 def likelihood(
@@ -446,7 +605,9 @@ def likelihood(
   Y ~ Normal.isotropic(mu, params.sigma)
 ```
 
-The full model takes the prior as a parameter, so that we can swap it. A
+The full model is their product, $p(\theta)\, p(y \mid \theta, x)$: it runs
+the prior, then the likelihood with the parameters the prior returned. It
+takes the prior as a parameter, so that we can swap it. A
 model passed around as a value has the type `ProbProg[A]`, short for the
 context function type `ProbContext ?=> A`. Writing `prior` inside the model
 runs it, in the model's own context:
@@ -477,7 +638,7 @@ def logDensityAtTruth(m: ProbProg[Any]): Float =
   .item
 
 (logDensityAtTruth(model(xData)), logDensityAtTruth(regression(xData, prior(nFeatures))))
-// res9: Tuple2[Float, Float] = (-117.938705F, -117.938705F)
+// res9: Tuple2[Float, Float] = (-122.983185F, -122.983185F)
 ```
 
 Because the prior is a parameter of `regression`, trying a different prior
@@ -509,148 +670,19 @@ Two things to keep in mind when composing:
   run when it is observed, traced or inferred; there, sampling it twice is an
   error.
 
-## Components
+## Summary: from mathematics to code
 
-Methods are enough to split a model into parts, but each part still uses
-the global sites `Alpha`, `Beta` and `Sigma`. A part that samples sites can
-therefore be used only once per model. Calling `likelihood` twice, say for
-two outcomes, would sample `Y` twice.
+Every step of this guide was a question asked of one joint distribution, and
+each has a direct counterpart in the code:
 
-A *component* is a part of a model that owns its sites. It is written as a
-module: a trait that extends `Component` declares the part, and each object
-that extends the trait is one instance of it, with its own sites.
-
-As an example we let the noise scale depend on the features too, a
-*location-scale* regression:
-
-$$
-y_n \sim \mathcal{N}\big(a + x_n \cdot b,\ \exp(c + x_n \cdot d)^2\big)
-$$
-
-Both the mean and the log-scale are linear in the features, so we write the
-linear predictor once, as a component. Its prior scale is a trait parameter:
-
-```scala
-trait Linear(priorScale: Float) extends Component:
-  object Intercept extends Site[Tensor0[Float32]]
-  object Weights extends Site[Tensor1[Feature, Float32]]
-
-  def apply(x: Tensor2[Sample, Feature, Float32])(using ProbContext) =
-    val intercept = Intercept ~ Normal(0f, priorScale)
-    val weights = Weights ~ Normal.isotropic(
-      Tensor1(x.extent(Axis[Feature])).fill(0f),
-      priorScale
-    )
-    (
-      output = x.dot(Axis[Feature])(weights) +! intercept,
-      values = Linear.Values(intercept, weights)
-    )
-
-object Linear:
-  case class Values(intercept: Tensor0[Float32], weights: Tensor1[Feature, Float32])
-```
-
-`apply` returns the linear predictor and a typed record of the component's
-values, `Linear.Values`; we come back to the record below.
-
-A component can contain other components. The location-scale regression
-has two instances of `Linear`, and its own outcome site:
-
-```scala
-trait LocationScale extends Component:
-  object mean extends Linear(priorScale = 10f)
-  object logScale extends Linear(priorScale = 1f)
-  object Y extends Site[Tensor1[Sample, Float32]]
-
-  def apply(x: Tensor2[Sample, Feature, Float32])(using ProbContext) =
-    val m = mean(x)
-    val s = logScale(x)
-    val y = Y ~ Normal(m.output, s.output.exp)
-    (y = y, values = LocationScale.Values(m.values, s.values))
-
-object LocationScale:
-  case class Values(mean: Linear.Values, logScale: Linear.Values)
-
-object outcome extends LocationScale
-```
-
-A site is named by the path of the components it is declared in. This is
-how sites with the same declaration are told apart, in error messages as
-well as here:
-
-```scala
-val lsLatent = Latent.discover:
-  observe(outcome.Y := yData):
-    outcome(xData)
-// lsLatent: Latent {
-  type Result >: NamedTuple[Tuple2["y", "values"], Tuple2[Tensor[Tuple1[Sample], Float32], Values]] <: NamedTuple[Tuple2["y", "values"], Tuple2[Tensor[Tuple1[Sample], Float32], Values]]
-} = witdraw.Latent$$anon$4@852222c
-
-lsLatent.sites.map(_.name)
-// res10: Seq[String] = Vector(
-//   "outcome.mean.Intercept",
-//   "outcome.mean.Weights",
-//   "outcome.logScale.Intercept",
-//   "outcome.logScale.Weights"
-// )
-```
-
-All parameters can take any real value: the scale is positive through
-`exp`.
-
-### Values as a typed record
-
-With many sites it helps to read all values of a component at once, as a
-typed record. Each component above returns its record, and the records nest
-like the components do: `LocationScale.Values` holds one `Linear.Values` for
-the mean and one for the log-scale.
-
-The record is part of the model's result, so it comes with every forward run,
-with `lsLatent.result(params)` at a point of the posterior, and with every
-sample of a chain. Here we find the posterior mode with `MAP` and read its
-record. We start the search at 0,
-i.e. mean 0 and scale 1 for every sample, rather than at the traced values,
-a draw from the prior whose scales can be extreme:
-
-```scala
-import witdraw.inference.MAP
-
-val zeros = Tensor1(xData.extent(Axis[Feature])).fill(0f)
-val start = Seq(
-  outcome.mean.Intercept := Tensor0(0f),
-  outcome.mean.Weights := zeros,
-  outcome.logScale.Intercept := Tensor0(0f),
-  outcome.logScale.Weights := zeros
-)
-```
-
-```scala
-val mode = lsLatent.result(MAP(lsLatent, start)).values
-// mode: Values = Values(
-//   mean = Values(intercept = 0.40074044, weights = [-1.4111495  2.0541945]),
-//   logScale = Values(
-//     intercept = -0.40187716,
-//     weights = [ 0.0855608  -0.02117608]
-//   )
-// )
-mode.mean.weights
-// res11: Tensor[Tuple1[Feature], Float32] = [-1.4111495  2.0541945]
-mode.logScale.weights
-// res12: Tensor[Tuple1[Feature], Float32] = [ 0.0855608  -0.02117608]
-mode.logScale.intercept.exp
-// res13: Tensor[EmptyTuple, Float32] = 0.669063
-```
-
-The weights of the mean are close to `betaTrue`. The data was simulated
-with a constant noise scale, so the weights of the log-scale are close to 0,
-and the scale itself, $e^c$, is close to the noise scale $\sigma$ that NUTS
-found for the first model.
-
-Records of tensors are DimWit tensor trees, so draws can also be averaged,
-mapped over or saved as a whole. The example
-[LocationScale.scala](../examples/src/main/scala/witdraw/examples/components/LocationScale.scala)
-fits a model with two outcomes, each a `LocationScale`, with NUTS, and
-averages the posterior draws as records.
-
-A component that is not an object, e.g. one of several created in a loop,
-needs an explicit name: `new Linear(1f) { override def name = s"region$i" }`.
+| Mathematics | Code |
+| --- | --- |
+| The joint distribution $p(\theta, y \mid x)$ | `model(xData)` |
+| A draw $(\theta, y) \sim p(\theta, y \mid x)$ | `ForwardSampler.run(key)(model(xData))` |
+| A draw $y \sim p(y \mid \theta, x)$ for fixed $\theta$ | `ForwardSampler.run(key)(observe(Alpha := …, …)(model(xData)))` |
+| The log-density $\log p(\theta, y \mid x)$ at given values | `ModelScorer.run(observe(Y := …, Alpha := …, …)(model(xData)))` |
+| $\theta \mapsto \log p(\theta, y_\text{obs} \mid x)$, the log posterior up to a constant | `latent.logDensity`, with `latent = Latent.discover(observe(Y := yData)(model(xData)))` |
+| Draws $\theta^{(s)} \sim p(\theta \mid y_\text{obs}, x)$ | `NUTS.adapt(latent, …).sample(…).samples` |
+| Posterior means, standard deviations, credible intervals | `summary(chains)(…)` |
+| Draws $y_\text{rep} \sim p(y_\text{rep} \mid y_\text{obs}, x)$ | `ForwardSampler` with `observe` of each posterior draw |
+| Prior times likelihood, $p(\theta)\, p(y \mid \theta, x)$ | `regression(xData, prior(nFeatures))`, which runs `prior`, then `likelihood` |
