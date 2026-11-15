@@ -9,7 +9,8 @@ import dimwit.tensor.Labels
 
 import dimwit.tensortree.{TensorTree, TreeOf}
 
-import witdraw.{AxisNames, ModelResult}
+import witdraw.{AxisNames, FieldNames, ModelResult}
+import witdraw.inference.Draws
 
 /** Forest plots of MCMC chains, in the style of ArviZ's `plot_forest`: one row
   * per element of each quantity, with a point estimate and nested credible

@@ -10,8 +10,8 @@ import dimwit.tensor.Labels
 
 import dimwit.tensortree.{TensorTree, TreeOf}
 
-import witdraw.{AxisNames, ModelResult}
-import witdraw.inference.{Diagnostics, SamplerInfo}
+import witdraw.{AxisNames, FieldNames, ModelResult}
+import witdraw.inference.{Diagnostics, Draws, SamplerInfo}
 
 /** Trace plots of MCMC chains, in the style of ArviZ's `plot_trace`: for each
   * element of a quantity, one row with the density of every chain on the left

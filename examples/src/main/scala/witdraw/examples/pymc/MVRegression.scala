@@ -18,7 +18,7 @@ import plotwit.PlotTargets.desktopBrowser
 import witdraw.ForwardSampler
 import witdraw.plots.TracePlot.tracePlot
 import witdraw.plots.ForestPlot.forestPlot
-import witdraw.plots.Summary.summary
+import witdraw.inference.Summary.summary
 
 /** Linear regression with a regularized horseshoe prior on the coefficients,
   * after the PyMC example "Multivariate regression with a regularized

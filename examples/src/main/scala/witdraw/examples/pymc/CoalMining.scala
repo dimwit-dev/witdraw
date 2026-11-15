@@ -15,7 +15,7 @@ import plotwit.*
 import plotwit.plots.{linePlot, scatterPlot}
 import plotwit.PlotTargets.desktopBrowser
 import witdraw.plots.TracePlot.tracePlot
-import witdraw.plots.Summary.summary
+import witdraw.inference.Summary.summary
 
 /** The coal mining disasters switchpoint model, after the PyMC example "Coal
   * mining disasters": the yearly number of disasters in the UK from 1851 to

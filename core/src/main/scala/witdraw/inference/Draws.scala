@@ -1,28 +1,14 @@
-package witdraw.plots
+package witdraw.inference
 
 import dimwit.*
 import dimwit.tensor.Labels
 import dimwit.tensortree.TensorTree
 
-import scala.NamedTuple.NamedTuple
-
-import witdraw.AxisNames
-
-/** The names of the fields of a named tuple, e.g. `(sigma = ..., beta = ...)`,
-  * which name the rows of a plot.
-  */
-trait FieldNames[R]:
-  def names: Seq[String]
-
-object FieldNames:
-  inline given namedTuple[N <: Tuple, V <: Tuple]: FieldNames[NamedTuple[N, V]] =
-    val fieldNames = compiletime.constValueTuple[N].toList.map(_.toString)
-    new FieldNames[NamedTuple[N, V]]:
-      def names = fieldNames
+import witdraw.{AxisNames, FieldNames}
 
 /** The draws of one quantity: one sequence per chain, all of the same length.
   */
-private[plots] final class Draws[T <: Tuple](
+private[witdraw] final class Draws[T <: Tuple](
     val name: String,
     val chains: Seq[Seq[Tensor[T, Float32]]],
     val elementNames: Seq[String]
@@ -49,7 +35,7 @@ private[plots] final class Draws[T <: Tuple](
 
   def numElements: Int = elementNames.size
 
-private[plots] object Draws:
+private[witdraw] object Draws:
   trait Chain derives Label
   trait Draw derives Label
 

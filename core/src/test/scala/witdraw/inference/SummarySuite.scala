@@ -1,9 +1,8 @@
-package witdraw.plots
+package witdraw.inference
 
 import dimwit.*
 import dimwit.stats.Normal
 import witdraw.*
-import witdraw.inference.Chain
 
 class SummarySuite extends munit.FunSuite:
 

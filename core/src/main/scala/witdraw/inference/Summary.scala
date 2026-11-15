@@ -1,11 +1,10 @@
-package witdraw.plots
+package witdraw.inference
 
 import dimwit.*
 import dimwit.tensor.Labels
 import dimwit.tensortree.{TensorTree, TreeOf}
 
-import witdraw.{AxisNames, ModelResult}
-import witdraw.inference.Diagnostics
+import witdraw.{AxisNames, FieldNames, ModelResult}
 
 /** A summary of MCMC chains, in the style of ArviZ's `summary`: one row per
   * element of each quantity, with its mean, standard deviation, highest
@@ -63,7 +62,7 @@ object Summary:
     *   default, as in ArviZ
     */
   def summary[P, I, A, R](
-      chains: Seq[witdraw.inference.Chain[P, I]],
+      chains: Seq[Chain[P, I]],
       axisNames: AxisNames[?]*
   )(using ModelResult[P, A])(select: A => R, hdiProb: Double = 0.94)(using
       TensorTree[R],
