@@ -1,16 +1,14 @@
 # Quickstart: Bayesian linear regression
 
 In WitDraw, a model is a joint probability distribution over all quantities
-of a problem: the parameters we want to learn and the data we observe. Once
-the joint distribution is written down, a Bayesian analysis consists of asking
-it questions: drawing from it, evaluating its density and, above all,
+of a problem. This includes the parameters we want to learn as well as the data we observe, all modeled as random variables.  Once the joint distribution is written down, the model is used for generating samples, evaluating its density and, above all,
 conditioning it on the data we have observed. This guide develops these ideas
-on one running example, Bayesian linear regression.
+on the classical example of Bayesian linear regression.
 
-## A model is a joint distribution
+## Modelling the joint distribution
 
 We want to model outcomes $y_n$ as a linear function of features $x_n$, plus
-Gaussian noise:
+Gaussian noise. The joint distribution can be written down as follows:
 
 $$
 \begin{aligned}
@@ -21,8 +19,8 @@ y_n &\sim \mathcal{N}(\alpha + x_n \cdot \beta,\ \sigma^2) && n = 1, \dots, N
 \end{aligned}
 $$
 
-These four lines define one joint distribution over all random variables of
-the problem, given the features $x = (x_1, \dots, x_N)$:
+Given the features $x = (x_1, \dots, x_N)$, these four lines define the joint distribution over all random variables of
+the problem:
 
 $$
 p(\alpha, \beta, \sigma, y \mid x)
@@ -30,45 +28,21 @@ p(\alpha, \beta, \sigma, y \mid x)
 $$
 
 Each line contributes the distribution of its variable given the variables it
-depends on: the first three lines one factor each, the last line one factor
-per observation. The model does not describe how the features arise: they are
-fixed inputs, which is why they appear only to the right of the bar.
+depends on. The first three lines define the prior distributions. They do not depend on the data. The last line describes how the outcomes $y_n$ depend on the parameters and the features. There is one factor $p(y_n \mid \alpha, \beta, \sigma, x_n)$
+per observation. Note that the model does not describe how the features arise: they are
+fixed inputs, which is why they appear only to the right of the bar, as variables we condition on.
 
 The same factorisation can be read as a recipe for generating data: draw
-$\alpha$, $\beta$ and $\sigma$ from their priors, then each $y_n$ given them.
-This is why such a model is called *generative*. The recipe and the joint
-distribution are one and the same thing, seen in two ways: the order in which
-we draw the variables is the order of the factors.
+$\alpha$, $\beta$ and $\sigma$ from their priors, then each $y_n$ given the values drawn for them.
+This is why such a model is called a *generative* model.
 
 Every task in this guide is a question asked of this one joint distribution.
 The two most basic questions are: what do draws from it look like, and what is
-its density at given values of all variables? The question that a data
-analysis is about, though, starts from the outcomes $y_\text{obs}$ we have
-actually observed. Fixing $y$ to $y_\text{obs}$ and asking what this tells us
-about the remaining variables is *conditioning*, and its answer is the
-*posterior* distribution $p(\alpha, \beta, \sigma \mid y_\text{obs}, x)$. As
-we will see, the posterior needs nothing beyond the joint distribution: up to a
-constant, its density is the joint density with $y$ fixed to the data.
+its density at given values of all variables? The most important question, however,  starts from the outcomes $y_\text{obs}$ we have
+actually observed and asks: if we fix $y$ to $y_\text{obs}$, what does this tell us
+about the remaining *latent* variables, or in other words, what is the *posterior*   distribution $p(\alpha, \beta, \sigma \mid y_\text{obs}, x)$. 
 
-A WitDraw model is a direct translation of the factorisation: each line above
-becomes one statement in the program. Each concept so far has its counterpart
-in WitDraw:
-
-| Concept | In WitDraw |
-| --- | --- |
-| A random variable | a `Site` |
-| One factor $p(v \mid \dots)$ | a statement `Site ~ distribution` |
-| The joint distribution | a model: a method that runs these statements |
-| Drawing from the joint | `ForwardSampler` |
-| Evaluating the joint density | `ModelScorer` |
-| Fixing variables to given values, e.g. the data | the handler `observe` |
-| The posterior: the density of the other variables, up to a constant | `Latent` |
-
-An *interpreter*, such as `ForwardSampler` or `ModelScorer`, does not change
-what the model means: the model always describes the same joint distribution.
-The interpreter decides which computation is performed with it. A *handler*,
-such as `observe`, sits between the model and the interpreter and changes
-what individual random variables do, here by fixing their values.
+Let's see how to answer these questions in WitDraw. 
 
 ## Setup
 
@@ -91,19 +65,9 @@ dimwit.initialize()
 
 ## Sites
 
-dimwit tensors have *labelled* axes, so we first define a label for each kind
-of axis: one entry per feature and one per sample (observation).
-
-Then we declare one site per random variable: `Alpha`, `Beta`, `Sigma` and `Y`
-stand for $\alpha$, $\beta$, $\sigma$ and $y = (y_1, \dots, y_N)$. A site is an
-`object`, so it has a name that we can refer to later, for example when we
-condition on observed data. Its type parameter is the tensor type of the
-variable: $\beta$ is a vector with one entry per feature, $y$ one with one
-entry per sample.
-
-A site stands for the variable, not for a value of it. In the code below, the
-features $x$ are `xData`, and the observed outcomes $y_\text{obs}$ are
-`yData`, a value we will give to the site `Y`.
+For each random variable we want to model, we declare a *site*. 
+The site is a singleton object that identifies the name of the variable and the type of its value. The type is a named DimWit tensor. Hence we have to 
+define for each axis of the tensor the label which this axis represents. In this example, we have two axes: `Feature` for the features and `Sample` for the samples.
 
 ```scala mdoc
 trait Feature derives Label
@@ -117,22 +81,8 @@ object Y extends Site[Tensor1[Sample, Float32]]     // outcomes
 
 ## Writing the model
 
-A model is a method with a `(using ProbContext)` parameter. The line
-
-```scala
-val beta = Beta ~ Normal.isotropic(...)
-```
-
-reads "the site `Beta` is distributed according to this normal distribution".
-It gives back a plain tensor of the site's type (`Tensor1[Feature, Float32]`),
-which we can use in ordinary dimwit code. *Which* tensor depends on the
-context the model runs in: a sampler draws one, a scorer uses a value we
-supply.
-
-The model takes the feature matrix `x` as an argument: it uses the covariates
-both to compute the mean of `y` and to find out how many weights there are.
-The outcomes `y`, on the other hand, are a random variable of the model. We
-pass in the observed values later, by conditioning.
+Let's write the above model using the sites we defined. 
+A model in WitDraw is a method that takes a `ProbContext` as a parameter. The `ProbContext` is a context that is provided later on to interpret the model when it is run. 
 
 ```scala mdoc
 def model(x: Tensor2[Sample, Feature, Float32])(using ProbContext) =
@@ -147,6 +97,17 @@ def model(x: Tensor2[Sample, Feature, Float32])(using ProbContext) =
   (alpha = alpha, beta = beta, sigma = sigma, y = y)
 ```
 
+The line: 
+```scala
+val beta = Beta ~ Normal.isotropic(...)
+```
+
+reads "the site `Beta` is distributed according to this normal distribution".
+It gives back a plain tensor of the site's type (`Tensor1[Feature, Float32]`),
+which we can use in ordinary dimwit code. *Which* tensor depends on the
+context the model runs in: a sampler draws one, a scorer uses a value we
+give it.
+
 Line by line, this is the model from the beginning: one `~` statement per
 line, each with the distribution of its variable given the values computed
 before it. The statements for $\alpha$, $\beta$ and $\sigma$ are one factor
@@ -159,20 +120,10 @@ standard deviation, not its variance, so $\mathcal{N}(0, 10^2)$ becomes
 `Normal(0f, 10f)`; and the mean `mu` is not a site, because it is not random:
 values computed from other variables are ordinary code.
 
-The order of the statements is the order of the factors. The model's density
-is the product of the factors, so its log-density is the sum of the
-log-densities of its `~` statements. This is what `ModelScorer`
-computes: given an assignment of values to all variables, it runs the model
-with those values and returns the log-density of the joint distribution at
-them, $\log p(\alpha, \beta, \sigma, y \mid x)$. It works for any assignment,
-so `ModelScorer` lets us evaluate the joint density wherever we like. It
-returns the logarithm rather than the density itself, because the density is
-a product of many factors, here 103, which quickly becomes too small to
-represent as a floating-point number; the sum of their logarithms does not.
-
 The model returns a named tuple of all its variables. This is what
 `ForwardSampler` gives back, so naming the fields makes the samples easy to
 use.
+
 
 ## Features
 
@@ -201,18 +152,8 @@ from the data, and no inference algorithm could recover the weights.
 
 ## Drawing from the joint distribution
 
-A model can only run inside a context, so to draw from it we hand
-`model(xData)` to `ForwardSampler`. (Calling `model(xData)` on its own, outside
-an interpreter, is a compile error.) `ForwardSampler` follows the generative
-recipe: it draws each variable in turn, given the values drawn before it. Each
-run is therefore one draw $(\alpha, \beta, \sigma, y)$ from the joint
-distribution.
-
-To study only some of the variables, we ignore the others in each draw. The
-`y` values on their own are then draws from the *prior predictive*
-distribution $p(y \mid x)$: what the model expects data to look like before
-seeing any. (Ignoring variables in draws from a joint distribution gives draws
-from the marginal distribution of the rest.)
+As mentioned above, when the model is run, it needs a `ProbContext` to interpret the `~` statements. A context that gives the model a meaning in this way is called an
+*interpreter*. The simplest one is `ForwardSampler`, which runs the generative recipe: it draws each variable in turn, given the  values drawn before it. Each run is therefore one draw $(\alpha, \beta, \sigma, y)$ from the joint distribution.
 
 ```scala mdoc:silent
 val priorPredictive = ForwardSampler.sample(priorKey, 5)(model(xData))
@@ -220,6 +161,11 @@ val priorPredictive = ForwardSampler.sample(priorKey, 5)(model(xData))
 
 `ForwardSampler.sample` runs the model 5 times, each with its own key split
 from `priorKey`; `ForwardSampler.run(key)(model)` runs it once.
+
+The `y` values on their own are draws from the *prior predictive* distribution
+$p(y \mid x)$: what the model expects data to look like before seeing any.
+(Ignoring variables in draws from a joint distribution gives draws from the
+marginal distribution of the rest.)
 
 Each sample is a named tuple, so we can print a short summary of each:
 
@@ -233,7 +179,8 @@ The spread of these draws shows how vague our priors are.
 
 ### Fixing a variable
 
-The handler `observe` runs a block of code with some sites fixed to given
+Next we want to see what the model predicts for the outcomes $y$ if we fix the noise scale $\sigma$ to a given value. This is done by using `observe`, a *handler*: it sits between the model and the interpreter and changes what individual sites do.
+`observe` runs a block of code with some sites fixed to given
 values. Here we fix the noise scale to 1 and let everything else vary:
 
 ```scala mdoc:silent
@@ -290,12 +237,29 @@ val yData =
   .y
 ```
 
-From now on we pretend not to know the true values, and ask what the data
-tells us about them.
+
+
+## Scoring a model
+
+Instead of drawing from the model, we can ask for its density at given values of all variables. `ModelScorer` runs the model and returns the log-density of the joint distribution at the values we fix with `observe`. Here we fix the outcomes to the observed data and the parameters to their true values, and get the log-density of the joint distribution at these values:
+
+```scala mdoc
+val logDensity = ModelScorer.run:
+  observe(
+    Y := yData,
+    Alpha := alphaTrue,
+    Beta := betaTrue,
+    Sigma := sigmaTrue
+  ):
+    model(xData)
+.item
+```
+
 
 ## Conditioning on the data
 
-What we want is the *posterior* distribution: the distribution of the
+From now on we pretend not to know the true values, and ask what the data
+tells us about them. What we want is the *posterior* distribution: the distribution of the
 parameters $\theta = (\alpha, \beta, \sigma)$ given the observed outcomes
 $y_\text{obs}$. By the definition of conditional probability (Bayes' rule),
 
@@ -315,7 +279,7 @@ $\theta$ explain the observed data.
 
 ### The posterior as a function of the parameters
 
-`ModelScorer` evaluates the joint log-density for any assignment of values to
+As mentioned above, `ModelScorer` evaluates the joint log-density for any assignment of values to
 all variables. The outcomes are given, so only the parameters are left to
 choose, and for every $\theta$ we can compute
 
@@ -347,19 +311,9 @@ logJoint(0.5f, Array(-1.5f, 2.0f), 0.8f)
 logJoint(0f, Array(0f, 0f), 1f)
 ```
 
-The denominator is an integral over all parameters, which we usually cannot
-compute. But it does not depend on $\theta$, so the function above is the log
-posterior up to a constant. That is enough: Markov chain Monte Carlo (MCMC)
-methods such as NUTS draw from a distribution given only its log-density up to
-a constant. The model observed on the data therefore already defines
-everything inference needs.
-
 ### Finding the parameters: `Latent`
 
-To turn the observed model into this function, we must know its arguments:
-the sites that are not observed. These are the *latent* sites. `Latent.discover`
-finds them: it runs the observed model forward once, records every site, and
-collects those without a value:
+As every inference algorithm needs to evaluate the log-density at many values of the parameters, we turn this function into a first-class value. `Latent` does this: it takes a model with some sites observed and finds the latent sites. 
 
 ```scala mdoc:silent
 val latent = Latent.discover:
@@ -371,7 +325,7 @@ val latent = Latent.discover:
 latent.sites.map(_.name)
 ```
 
-`latent.logDensity` is the function above. Its argument has the type
+`latent.logDensity` is then the function above. Its argument has the type
 `latent.Params`, made for this model: one value per latent site, in one
 vector. To evaluate it, `Latent` fixes the latent sites to these values, so
 that every site has a value, and runs `ModelScorer`.
