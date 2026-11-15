@@ -2,63 +2,37 @@
 
 ## Vision
 
-Probabilistic programs that are easy to read, reason about and trust, even when
-the model becomes complex. The model itself should read like the statistical
-story it tells, with every assumption visible in the code.
+Probabilistic programs that are easy to read, express the statistical story they tell, and remain manageable and correct even when the model becomes complex.
 
 ## Why
 
-A probabilistic model is a set of assumptions about how the data came to be.
-Its conclusions are only as good as those assumptions, so someone has to
-understand them and vouch for them. More and more often, they did not write
-the model themselves; an AI agent or a colleague did. It is thus important that
-all the assumptions are in the code and that a compiler helps to check them.
+Understanding a statistical model is hard. Expressing the statistical story in code, 
+having the compiler help to check that the quantities are used consistently, and being able to run the same code for prior sampling, predictive checks and inference, all make it easier to understand and maintain a model.
+
 
 ## How
 
-WitDraw builds on [DimWit](https://github.com/dimwit-dev/dimwit), which makes
-tensor dimensions part of Scala 3 types: you name what each dimension means,
-and the compiler checks that the names are used consistently. WitDraw carries
-this over to probabilistic programs:
+A WitDraw model is a joint distribution over all quantities of a problem,
+written as the story of how the data is generated. Everything else is a
+question asked of that one distribution, by running the same code in
+different ways.
 
-- Every random variable is a `Site[T]`, whose type states its shape, named
-  dimensions and data type. The compiler rejects a model that uses a variable
-  inconsistently with what it declares.
-- A model is a plain Scala function that only tells the generative story.
-  Prior sampling, predictive checks and scoring for inference all run the same
-  code, so there is no second version that can drift from the one a reader
-  reviewed.
-- `observe(Y := data)(model)` conditions a model without changing its code,
-  so it is always explicit which variables are observed.
-- Models need a `ProbContext` capability to run, in the style of Scala 3's
-  direct-style capabilities. Sub-models are ordinary method calls, and
-  handlers such as `observe` are ordinary functions that wrap a block.
-
-New to WitDraw? The [quickstart](docs/quickstart.md) walks through a complete
-Bayesian linear regression, from writing the model to checking the posterior.
-
-## Example
-
-A Bayesian linear regression. Each random variable is declared as a site,
-together with its shape:
+As an example, take a Bayesian linear regression. Each random variable is a
+*site*, whose type states its shape, named dimensions (through
+[DimWit](https://github.com/dimwit-dev/dimwit)) and data type:
 
 ```scala
-import dimwit.*
-import dimwit.stats.*
-import witdraw.*
-import witdraw.inference.NUTS
-
 trait Sample derives Label   // one entry per observation
-trait Feature derives Label  // one entry per feature, i.e. per regression weight
+trait Feature derives Label  // one entry per feature
 
 object Alpha extends Site[Tensor0[Float32]]           // intercept
-object Beta  extends Site[Tensor1[Feature, Float32]]  // regression weights
-object Sigma extends Site[Tensor0[Float32]]           // noise scale (> 0)
+object Beta  extends Site[Tensor1[Feature, Float32]]  // weights
+object Sigma extends Site[Tensor0[Float32]]           // noise scale
 object Y     extends Site[Tensor1[Sample, Float32]]   // outcomes
 ```
 
-The model tells the generative story, and nothing else. The feature matrix
-`x` is an input. The outcomes `Y` are a random variable like any other:
+The model reads like its mathematical definition. The features `x` are an
+input; the outcomes are a random variable like the parameters:
 
 ```scala
 def model(x: Tensor2[Sample, Feature, Float32])(using ProbContext) =
@@ -70,8 +44,8 @@ def model(x: Tensor2[Sample, Feature, Float32])(using ProbContext) =
   (alpha = alpha, beta = beta, sigma = sigma, y = y)
 ```
 
-If the likelihood doesn't match what `Y` declares, for example because the
-features were forgotten, the model does not compile:
+A likelihood that does not match what `Y` declares, e.g. because the features
+were forgotten, does not compile:
 
 ```scala
 val y = Y ~ Normal.isotropic(beta, sigma)
@@ -80,44 +54,27 @@ val y = Y ~ Normal.isotropic(beta, sigma)
 //        Required: Tensor[Tuple1[Sample], Float32]
 ```
 
-The same model is used for sampling and for scoring. Observations enter through
-`observe`, and each `:=` is checked against the type of its site. Whether a
-variable is observed is decided where the model is used, not where it is
-defined.
+The same model answers every question. Which variables are observed is decided
+where the model is used, not where it is defined:
 
 ```scala
-// draw every variable from the prior: a named tuple (alpha, beta, sigma, y)
-val prior = ForwardSampler.run(Key(0))(model(xData))
+// a draw of all variables from the joint distribution: (alpha, beta, sigma, y)
+val draw = ForwardSampler.run(Key(0))(model(xData))
 
-// draw with the noise scale fixed to 1
-val withKnownSigma = ForwardSampler.run(Key(1)):
-  observe(Sigma := Tensor0(1f)):
-    model(xData)
-```
-
-For inference, `Latent.discover` traces one run of the observed model and
-finds its latent sites, here `alpha`, `beta` and `sigma`. It gives a parameter
-type for them and a starting point, and the inference methods in
-`witdraw.inference` work on it directly: `NUTS` samples the posterior, `MAP`
-finds its mode, and `Laplace` approximates it by a Gaussian. Constraints come
-from the distributions: `sigma` has a `HalfCauchy` prior, so it is positive,
-and inference samples it on the log scale.
-
-```scala
-val posterior = Latent.discover:
+// the posterior given the observed outcomes: Latent finds the unobserved
+// sites (alpha, beta, sigma), and NUTS draws from their posterior
+val latent = Latent.discover:
   observe(Y := yData)(model(xData))
+val chain = NUTS.adapt(latent, Key(1), latent.init).sample(Key(2), 2000)
 
-// warmup tunes the step size and the mass matrix
-val adapted = NUTS.adapt(posterior, Key(3), posterior.init)
-val chain = adapted.sample(Key(4), 2000)
-chain(Sigma)   // posterior draws of sigma, each a Sigma.Value (> 0)
+chain.samples.map(_.sigma)   // posterior draws of sigma
+println(summary(Seq(chain))(s => (alpha = s.alpha, beta = s.beta, sigma = s.sigma)))
 ```
 
-The [quickstart](docs/quickstart.md) is a complete, runnable version of this
-example: it simulates data, runs NUTS and checks the posterior against the
-true parameters. It also shows how larger models are built from parts,
-including components: parts that own their sites, so that a part can be used
-more than once in the same model.
+The [quickstart](docs/quickstart.md) develops this example step by step, and
+explains how each step corresponds to the mathematics: drawing from the joint
+distribution, conditioning, inference, posterior predictive checks, and
+building models from parts.
 
 More examples, including ports of models from
 [Statistical Rethinking](https://xcelab.net/rm/) and the Stan user guide, are
@@ -152,7 +109,6 @@ name = "my-project"
 version = "0.1.0"
 requires-python = "==3.12.*"
 dependencies = [
-    "einops>=0.8.1",
     "jax>=0.8.1",       # or "jax[cuda12]" for GPU support
     "blackjax>=1.5.0"
 ]
